@@ -10,7 +10,6 @@ TOKEN = "8975492791:AAEzDgBx2ZIPrScyLvqTHO-rquRgB_crKFm"
 CHAT_ID = "@Moiyad_update_Dam_Airport_Flight" 
 
 URL = "https://damascusairport.com"
-# تم تحديث الـ Headers بالكامل لمحاكاة متصفح حقيقي وتخطي الحماية
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -18,22 +17,18 @@ HEADERS = {
     "Connection": "keep-alive"
 }
 
-# --- الجزء الذكي للاستجابة لطلبات سيرفر Render ---
 class DummyWebhookServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
         self.wfile.write(b"Bot is alive and monitoring flights!")
-
     def do_HEAD(self):
         self.send_response(200)
         self.send_header("Content-type", "text/plain")
         self.end_headers()
-
     def log_message(self, format, *args):
         return
-# ---------------------------------------------
 
 def send_telegram(message):
     telegram_url = f"https://telegram.org{TOKEN}/sendMessage"
@@ -50,13 +45,13 @@ def check_flights():
         response = requests.get(URL, headers=HEADERS, timeout=15)
         if response.status_code != 200:
             print(f"فشل الاتصال بموقع المطار، كود الاستجابة: {response.status_code}")
+            send_telegram(f"❌ السيرفر السحابي غير قادر على فتح موقع المطار الخارجي.\nكود الاستجابة التقني هو: **{response.status_code}**")
             return []
         soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # البحث عن الجدول بكافة الطرق الممكنة في هيكلية الموقع المحدثة
         table = soup.find('table') or soup.find(class_='table') or soup.find('div', class_='table-responsive')
         if not table:
             print("لم يتم العثور على جدول الرحلات في الصفحة")
+            send_telegram("⚠ نجح الاتصال بالموقع، ولكن لم يتم العثور على جدول الطائرات المحدث في الهيكلية.")
             return []
         
         flights = []
@@ -75,12 +70,11 @@ def check_flights():
         return flights
     except Exception as e:
         print("خطأ أثناء جلب البيانات من موقع المطار:", e)
+        send_telegram(f"🚨 حدث خطأ برميجي طارئ أثناء محاولة الاتصال بالموقع السوري:\n`{str(e)[:100]}`")
         return []
 
 def airport_monitor():
     flight_registry = {}
-    
-    # نقل سطر إرسال الرسالة الترحيبية ليكون أول شيء ينفذ فوراً دون انتظار جلب البيانات
     print("محاولة إرسال الرسالة الترحيبية الأولى للقناة...")
     send_telegram("🚀 تم تشغيل نظام أتمتة إشعارات مطار دمشق الدولي المتكامل بنجاح وهو يراقب الرحلات الآن!")
     
