@@ -12,7 +12,7 @@ CHAT_ID = "@Moiyad_update_Dam_Airport_Flight"
 URL = "https://damascusairport.com"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-# --- الجزء الذكي لإيهام سيرفر Render المجاني ---
+# --- الجزء الذكي المطور للاستجابة لجميع طلبات سيرفر Render ---
 class DummyWebhookServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -20,29 +20,36 @@ class DummyWebhookServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Bot is alive and monitoring flights!")
 
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), DummyWebhookServer)
-    print(f"🌍 تم تشغيل خادم الإيهام الوهمي على البورت {port}")
-    server.serve_forever()
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # كتم السجلات الروتينة لمنع ملء الشاشة السوداء
+        return
 # ---------------------------------------------
 
 def send_telegram(message):
     telegram_url = f"https://telegram.org{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(telegram_url, json=payload)
+        response = requests.post(telegram_url, json=payload, timeout=10)
+        print("استجابة تليجرام:", response.status_code, response.text)
     except Exception as e:
         print("خطأ في إرسال التليجرام:", e)
 
 def check_flights():
+    print("جاري فحص رحلات مطار دمشق الدولي الآن...")
     try:
         response = requests.get(URL, headers=HEADERS, timeout=15)
         if response.status_code != 200:
+            print(f"فشل الاتصال بموقع المطار، كود الاستجابة: {response.status_code}")
             return []
         soup = BeautifulSoup(response.content, 'html.parser')
         table = soup.find('table') or soup.find(class_='table')
         if not table:
+            print("لم يتم العثور على جدول الرحلات في الصفحة")
             return []
         flights = []
         rows = table.find_all('tr')[1:]
@@ -59,14 +66,17 @@ def check_flights():
                 flights.append(flight_info)
         return flights
     except Exception as e:
-        print("خطأ أثناء جلب البيانات:", e)
+        print("خطأ أثناء جلب البيانات من موقع المطار:", e)
         return []
 
 def airport_monitor():
     flight_registry = {}
+    print("محاولة إرسال الرسالة الترحيبية الأولى للقناة...")
     send_telegram("🚀 تم تشغيل نظام أتمتة إشعارات مطار دمشق الدولي المتكامل بنجاح وهو يراقب الرحلات الآن!")
+    
     while True:
         current_flights = check_flights()
+        print(f"تم رصد {len(current_flights)} رحلة في الجدول الحركي.")
         for flight in current_flights:
             f_num = flight["number"]
             f_status = flight["status"]
@@ -74,7 +84,7 @@ def airport_monitor():
             f_time = flight["time"]
             f_airline = flight["airline"]
             
-            if not f_num or f_num == "غير محدد":
+            if not f_num or f_num == "غير محدد" or f_num == "رقم الرحلة":
                 continue
                 
             if f_num not in flight_registry:
@@ -136,7 +146,6 @@ def airport_monitor():
         time.sleep(300)
 
 if __name__ == "__main__":
-    # تشغيل خادم الإيهام في خيط مستقل لإرضاء منصة Render
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-    # تشغيل الفحص الرئيسي للرحلات
+    port = int(os.environ.get("PORT", 10000))
+    threading.Thread(target=lambda: HTTPServer(("0.0.0.0", port), DummyWebhookServer).serve_forever(), daemon=True).start()
     airport_monitor()
