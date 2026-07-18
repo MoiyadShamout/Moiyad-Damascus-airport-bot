@@ -10,9 +10,15 @@ TOKEN = "8975492791:AAEzDgBx2ZIPrScyLvqTHO-rquRgB_crKFm"
 CHAT_ID = "@Moiyad_update_Dam_Airport_Flight" 
 
 URL = "https://damascusairport.com"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+# تم تحديث الـ Headers بالكامل لمحاكاة متصفح حقيقي وتخطي الحماية
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "ar,en-US;q=0.7,en;q=0.3",
+    "Connection": "keep-alive"
+}
 
-# --- الجزء الذكي المطور للاستجابة لجميع طلبات سيرفر Render ---
+# --- الجزء الذكي للاستجابة لطلبات سيرفر Render ---
 class DummyWebhookServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -26,7 +32,6 @@ class DummyWebhookServer(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        # كتم السجلات الروتينة لمنع ملء الشاشة السوداء
         return
 # ---------------------------------------------
 
@@ -47,10 +52,13 @@ def check_flights():
             print(f"فشل الاتصال بموقع المطار، كود الاستجابة: {response.status_code}")
             return []
         soup = BeautifulSoup(response.content, 'html.parser')
-        table = soup.find('table') or soup.find(class_='table')
+        
+        # البحث عن الجدول بكافة الطرق الممكنة في هيكلية الموقع المحدثة
+        table = soup.find('table') or soup.find(class_='table') or soup.find('div', class_='table-responsive')
         if not table:
             print("لم يتم العثور على جدول الرحلات في الصفحة")
             return []
+        
         flights = []
         rows = table.find_all('tr')[1:]
         for row in rows:
@@ -71,6 +79,8 @@ def check_flights():
 
 def airport_monitor():
     flight_registry = {}
+    
+    # نقل سطر إرسال الرسالة الترحيبية ليكون أول شيء ينفذ فوراً دون انتظار جلب البيانات
     print("محاولة إرسال الرسالة الترحيبية الأولى للقناة...")
     send_telegram("🚀 تم تشغيل نظام أتمتة إشعارات مطار دمشق الدولي المتكامل بنجاح وهو يراقب الرحلات الآن!")
     
@@ -84,7 +94,7 @@ def airport_monitor():
             f_time = flight["time"]
             f_airline = flight["airline"]
             
-            if not f_num or f_num == "غير محدد" or f_num == "رقم الرحلة":
+            if not f_num or f_num == "غير محدد" or "رقم" in f_num:
                 continue
                 
             if f_num not in flight_registry:
