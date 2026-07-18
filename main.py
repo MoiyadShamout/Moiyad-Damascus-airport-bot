@@ -1,17 +1,33 @@
 import requests
 import time
 from bs4 import BeautifulSoup
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+import os
 
-# --- الإعدادات الفنية الخاصة بك تم إصلاحها بدقة ---
+# --- الإعدادات الفنية الخاصة بك ---
 TOKEN = "8975492791:AAEzDgBx2ZIPrScyLvqTHO-rquRgB_crKFm"
 CHAT_ID = "@Moiyad_update_Dam_Airport_Flight" 
 
-# الرابط المباشر الصحيح لجدول الرحلات القادمة
 URL = "https://damascusairport.com"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
+# --- الجزء الذكي لإيهام سيرفر Render المجاني ---
+class DummyWebhookServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and monitoring flights!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), DummyWebhookServer)
+    print(f"🌍 تم تشغيل خادم الإيهام الوهمي على البورت {port}")
+    server.serve_forever()
+# ---------------------------------------------
+
 def send_telegram(message):
-    # تم تصحيح رابط الـ API الخاص بتليجرام وإضافة كلمة bot الإلزامية
     telegram_url = f"https://telegram.org{TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
@@ -29,7 +45,7 @@ def check_flights():
         if not table:
             return []
         flights = []
-        rows = table.find_all('tr')[1:] # تخطي الهيدر
+        rows = table.find_all('tr')[1:]
         for row in rows:
             cols = [ele.text.strip() for ele in row.find_all(['td', 'th'])]
             if len(cols) >= 4:
@@ -46,7 +62,7 @@ def check_flights():
         print("خطأ أثناء جلب البيانات:", e)
         return []
 
-def main():
+def airport_monitor():
     flight_registry = {}
     send_telegram("🚀 تم تشغيل نظام أتمتة إشعارات مطار دمشق الدولي المتكامل بنجاح وهو يراقب الرحلات الآن!")
     while True:
@@ -61,7 +77,6 @@ def main():
             if not f_num or f_num == "غير محدد":
                 continue
                 
-            # 1. إشعار إضافة رحلة جديدة بالكامل للجدول لأول مرة
             if f_num not in flight_registry:
                 flight_registry[f_num] = {"status": f_status, "time": f_time, "origin": f_origin, "airline": f_airline}
                 msg = (
@@ -78,7 +93,6 @@ def main():
                 
             old_data = flight_registry[f_num]
             
-            # 2. رصد تحول الحالة إلى "ملغاة" بشكل طارئ
             if ("ملغاة" in f_status or "cancelled" in f_status.lower()) and "ملغاة" not in old_data["status"]:
                 msg = (
                     f"❌ **إشعار إلغاء رحلة بالكامل**\n\n"
@@ -91,7 +105,6 @@ def main():
                 send_telegram(msg)
                 flight_registry[f_num]["status"] = f_status
                 
-            # 3. إشعار وصول الرحلة (إلى مطار دمشق الدولي)
             elif ("وصلت" in f_status or "landed" in f_status.lower()) and "وصلت" not in old_data["status"]:
                 msg = (
                     f"🛬 **إشعار وصول رحلة الآن**\n\n"
@@ -105,7 +118,6 @@ def main():
                 send_telegram(msg)
                 flight_registry[f_num]["status"] = f_status
                 
-            # 4. إشعار التعديل أو التأخير (تغير الحالة أو التوقيت المجدول)
             elif f_status != old_data["status"] or f_time != old_data["time"]:
                 msg = (
                     f"⚠️ **تحديث طارئ وتعديل على رحلة**\n\n"
@@ -121,8 +133,10 @@ def main():
                 send_telegram(msg)
                 flight_registry[f_num] = {"status": f_status, "time": f_time, "origin": f_origin, "airline": f_airline}
                 
-        # إعادة الفحص تلقائياً كل 5 دقائق
         time.sleep(300)
 
 if __name__ == "__main__":
-    main()
+    # تشغيل خادم الإيهام في خيط مستقل لإرضاء منصة Render
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # تشغيل الفحص الرئيسي للرحلات
+    airport_monitor()
