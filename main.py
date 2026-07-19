@@ -5,7 +5,7 @@ from flask import Flask
 import threading
 
 # --- الإعدادات الفنية الخاصة بك مدمجة بدقة بالغة ---
-TOKEN = "8975492791:AAEzDgBx2ZIPrScyLvqTHO-rquRgB_crKFm"
+TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM"
 # تم وضع المعرف الرقمي الصارم لقناتك لضمان كسر الحظر وتوصيل الإشعارات فوراً
 CHAT_ID = "-1002237894561" 
 
