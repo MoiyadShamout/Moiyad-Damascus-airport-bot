@@ -39,37 +39,41 @@ def fetch_live_flights():
             text = clean_text(row.get_text(separator=" "))
             
             # فلترة ذكية لالتقاط أسطر الرحلات السورية والإقليمية النشطة فقط
-            if any(k in text for k in ["وصول", "مغادرة", "XH", "فلاي شام", "السورية"]):
+            if any(k in text for k in ["وصول", "مغادرة", "XH", "RB", "فلاي شام", "السورية"]):
                 parts = text.split()
                 if len(parts) >= 4:
                     # تفكيك النص وتوزيع البيانات بدقة على مصفوفة الرحلة
-                    f_num = parts[1] if len(parts) > 1 else parts[0]
+                    f_num = parts if len(parts) > 1 else parts
                     f_airline = "فلاي شام" if "فلاي" in text or "شام" in text else "السورية للطيران"
                     
                     # استخراج وتحديد مكان المطار ونوع الاتجاه
                     f_airport = "مطار حلب الدولي" if "حلب" in text else "مطار دمشق الدولي"
-                    f_origin = "طرابلس - MJI" if "طرابلس" in text else ("دبي - DXB" if "دبي" in text else "وجهة إقليمية")
+                    f_origin = "اسطنبول" if "اسطنبول" in text else ("طرابلس" if "طرابلس" in text else ("دبي" if "دبي" in text else "وجهة إقليمية"))
                     
                     # محرك ذكي لتصنيف الحالة الحالية المتغيرة من شاشة المطار
                     if "ملغاة" in text or "إلغاء" in text or "ملغاه" in text:
-                        f_status = "ملغاة"
+                        f_status = "❌ ملغاة"
                     elif "متأخرة" in text or "تأخير" in text or "تأخرت" in text:
-                        f_status = "تأخرت"
+                        f_status = "⏳ تأخير"
                     elif "تعديل" in text or "تعدلت" in text:
-                        f_status = "تعدلت"
+                        f_status = "🔄 تعديل"
                     elif "وصول" in text or "وصلت" in text:
-                        f_status = "وصلت"
+                        f_status = "🛬 وصلت"
                     elif "مغادرة" in text or "أقلعت" in text:
-                        f_status = "أقلعت"
+                        f_status = "🛫 أقلعت"
                     else:
-                        f_status = "مجدولة"
+                        f_status = "⏰ مجدولة"
                     
-                    # قراءة نمط التوقيت المحدث للرحلة
+                    # قراءة نمط التوقيت (المجدول والمتوقع) بدقة من أرقام الجدول
                     time_parts = [p for p in parts if ":" in p and len(p) == 5]
-                    f_time = time_parts[0] if time_parts else "00:15"
+                    f_scheduled_time = time_parts if len(time_parts) > 0 else "04:30"
+                    
+                    # إذا وفر المطار توقيتاً ثانياً فعلياً/متوقعاً على الشاشة نقرأه، وإلا نحسب توقيتاً تقديرياً
+                    f_estimated_time = time_parts if len(time_parts) > 1 else f_scheduled_time
                     
                     # تحديد اتجاه الرحلة (مغادرة أو قادمة) لصياغة نص دقيق تسويقياً للشركات
-                    f_type = "DEPARTURE" if "مغادرة" in text or "أقلعت" in text else "ARRIVAL"
+                    f_type = "🛬 رحلة وصول" if "وصول" in text or "وصلت" in text else "🛫 رحلة مغادرة"
+                    f_direction_label = "القادمة من" if "وصول" in text or "وصلت" in text else "المتجهة إلى"
                     
                     flights_list.append({
                         "num": f_num,
@@ -77,8 +81,10 @@ def fetch_live_flights():
                         "airport": f_airport,
                         "origin": f_origin,
                         "status": f_status,
-                        "time": f_time,
-                        "type": f_type
+                        "scheduled_time": f_scheduled_time,
+                        "estimated_time": f_estimated_time,
+                        "type": f_type,
+                        "direction_label": f_direction_label
                     })
     except Exception as e:
         print(f"[-] حدث خطأ أثناء معالجة البيانات الحية: {e}")
@@ -100,38 +106,28 @@ def save_current_state(state):
     with open(STATE_FILE, 'w', encoding='utf-8') as f:
         json.dump(state, f, ensure_ascii=False, indent=4)
 
-def broadcast_telegram_alert(flight, alert_type):
-    """بناء الإشعارات بالأسطر المنفصلة والإيموجي المخصص لكل حالة وبثها فوراً"""
+def broadcast_telegram_alert(flight):
+    """بناء الإشعارات بالأسطر المنفصلة والإيموجي الفخم المتطابق تماماً مع طلبك"""
     
-    # صياغة ترويية الرسالة والحالة بناءً على نوع التغير المكتشف في الجدول
-    if alert_type == "CANCELLED":
-        header = "❌ **إشعار إلغاء رحلة جوية عاجل**\n\n"
-        status_display = "`ملغاة بالكامل من المصدر` ⚠️"
-    elif alert_type == "DELAYED":
-        header = "⏳ **إشعار تأخر رحلة جوية الآن**\n\n"
-        status_display = "`متأخرة عن موعدها المحدد` ⏰"
-    elif alert_type == "MODIFIED":
-        header = "🔄 **إشعار تعديل وقت الرحلة الجوية**\n\n"
-        status_display = "`تم تعديل توقيت الإقلاع/الهبوط المجدول` ⏱️"
-    elif alert_type == "ARRIVED":
-        header = "🛬 **إشعار وصول رحلة الآن**\n\n"
-        status_display = "`وصلت بسلام وأمان` ✅"
-    else:
-        header = "🛫 **إشعار إقلاع رحلة الآن**\n\n"
-        status_display = "`أقلعت بحفظ الله` ✈️"
+    # تحديد مسمى الوقت بناءً على حالة الطائرة (فعلي إذا وصلت، متوقع إذا كانت قادمة)
+    time_label = "🕐 الموعد الفعلي للوصول" if "وصلت" in flight['status'] else "🕐 الموعد المتوقع"
+    if "أقلعت" in flight['status']:
+        time_label = "🕐 الموعد الفعلي للإقلاع"
 
-    # صياغة السطور المنفصلة وتحديد جهة الطيران (قادمة من أو متجهة إلى) بناءً على نوع الجدول
-    direction_label = "المتجهة إلى" if flight['type'] == "DEPARTURE" else "القادمة من"
-    location_label = "من" if flight['type'] == "DEPARTURE" else "إلى"
-    
     message = (
-        f"{header}"
-        f"🔢 **رقم الرحلة:** **{flight['num']}**\n"
-        f"✈️ **شركة الطيران:** *{flight['airline']}*\n"
-        f"📍 **{direction_label}:** **{flight['origin']}**\n"
-        f"🏛️ **{location_label}:** **{flight['airport']}**\n"
-        f"📊 **الحالة:** {status_display}\n"
-        f"⏰ **التوقيت:** {flight['time']}"
+        f"✅ **تم تحديث حالة الرحلة** ✈️\n\n"
+        f"🔢 **رقم الرحلة:** {flight['num']}\n"
+        f"🏢 **الناقل:** {flight['airline']}\n"
+        f"📍 **{flight['direction_label']}:** {flight['origin']}\n"
+        f"🏛️ **المطار:** {flight['airport']}\n"
+        f"📋 **نوع الرحلة:** {flight['type']}\n"
+        f"⏰ **الموعد المجدول:** {flight['scheduled_time']}\n"
+        f"{time_label}: {flight['estimated_time']}\n"
+        f"📊 **الحالة:** {flight['status']}\n\n"
+        f"🔔 **سيتم إعلامك عند أي تحديث مهم:**\n"
+        f"• تأخير ⏰\n"
+        f"• وصول 🛬\n"
+        f"• إلغاء ❌"
     )
     
     telegram_url = f"https://telegram.com{TELEGRAM_TOKEN}/sendMessage"
@@ -144,14 +140,14 @@ def broadcast_telegram_alert(flight, alert_type):
     try:
         res = requests.post(telegram_url, json=payload, timeout=10)
         if res.status_code == 200:
-            print(f"[+] تم بث الإشعار المنفصل للرحلة: {flight['num']}")
+            print(f"[+] تم بث الإشعار الفخم للرحلة: {flight['num']}")
         else:
             print(f"[-] خطأ تليغرام: {res.text}")
     except Exception as e:
         print(f"[-] فشل الاتصال بتليغرام: {e}")
 
 def main():
-    print("[+] انطلاق نظام تتبع الطيران السوري الموحد في السحاب (دمشق وحلب)...")
+    print("[+] انطلاق نظام تتبع الطيران الفخم وتحديث المواعيد المتوقعة السحابي...")
     
     while True:
         live_flights = fetch_live_flights()
@@ -161,7 +157,7 @@ def main():
         for flight in live_flights:
             f_num = flight["num"]
             live_status = flight["status"]
-            live_time = flight["time"]
+            live_time = flight["estimated_time"]
             
             # حفظ الحالة والتوقيت الحالي في مصفوفة المقارنة العميقة
             current_state[f_num] = {"status": live_status, "time": live_time}
@@ -171,23 +167,13 @@ def main():
                 old_status = past_state[f_num]["status"]
                 old_time = past_state[f_num]["time"]
                 
-                if live_status != old_status:
-                    if live_status == "ملغاة":
-                        broadcast_telegram_alert(flight, "CANCELLED")
-                    elif live_status == "تأخرت":
-                        broadcast_telegram_alert(flight, "DELAYED")
-                    elif live_status == "تعدلت":
-                        broadcast_telegram_alert(flight, "MODIFIED")
-                    elif live_status == "وصلت":
-                        broadcast_telegram_alert(flight, "ARRIVED")
-                    elif live_status == "أقلعت":
-                        broadcast_telegram_alert(flight, "DEPARTED")
-                elif live_time != old_time:
-                    broadcast_telegram_alert(flight, "MODIFIED")
+                # إذا تغيرت الحالة أو تغير الوقت المتوقع، أرسل التنبيه الجديد فوراً
+                if live_status != old_status or live_time != old_time:
+                    broadcast_telegram_alert(flight)
             else:
                 # رصد بث الرحلات المحدثة لأول مرة على شاشات المطارات
-                if live_status in ["وصلت", "أقلعت", "تأخرت", "ملغاة"]:
-                    broadcast_telegram_alert(flight, live_status.upper())
+                if "مجدولة" not in live_status:
+                    broadcast_telegram_alert(flight)
                     
         save_current_state(current_state)
         
