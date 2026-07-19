@@ -42,8 +42,8 @@ def fetch_live_flights():
             if any(k in text for k in ["وصول", "مغادرة", "XH", "RB", "فلاي شام", "السورية"]):
                 parts = text.split()
                 if len(parts) >= 4:
-                    # تفكيك النص وتوزيع البيانات بدقة على مصفوفة الرحلة
-                    f_num = parts if len(parts) > 1 else parts
+                    # تفكيك النص وتوزيع البيانات بدقة - تم إصلاح الثغرة هنا بجعل رقم الرحلة نصاً متماسكاً
+                    f_num = parts[0] if len(parts) > 0 else "---"
                     f_airline = "فلاي شام" if "فلاي" in text or "شام" in text else "السورية للطيران"
                     
                     # استخراج وتحديد مكان المطار ونوع الاتجاه
@@ -66,10 +66,10 @@ def fetch_live_flights():
                     
                     # قراءة نمط التوقيت (المجدول والمتوقع) بدقة من أرقام الجدول
                     time_parts = [p for p in parts if ":" in p and len(p) == 5]
-                    f_scheduled_time = time_parts if len(time_parts) > 0 else "04:30"
+                    f_scheduled_time = time_parts[0] if len(time_parts) > 0 else "04:30"
                     
                     # إذا وفر المطار توقيتاً ثانياً فعلياً/متوقعاً على الشاشة نقرأه، وإلا نحسب توقيتاً تقديرياً
-                    f_estimated_time = time_parts if len(time_parts) > 1 else f_scheduled_time
+                    f_estimated_time = time_parts[1] if len(time_parts) > 1 else f_scheduled_time
                     
                     # تحديد اتجاه الرحلة (مغادرة أو قادمة) لصياغة نص دقيق تسويقياً للشركات
                     f_type = "🛬 رحلة وصول" if "وصول" in text or "وصلت" in text else "🛫 رحلة مغادرة"
