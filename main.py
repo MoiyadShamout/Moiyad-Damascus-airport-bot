@@ -1,5 +1,7 @@
 import time
 import requests
+import threading
+from flask import Flask
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -12,6 +14,17 @@ CHAT_ID = '-1004481182341'
 URL_MONITOR = 'https://damairport.gov.sy/'
 last_status = {}
 
+# إعداد Flask لإبقاء الخدمة نشطة
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+# --- وظائف البوت ---
 def send_telegram_message(text):
     """إرسال إشعار إلى تيليجرام"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -35,7 +48,7 @@ def check_flights():
     driver = get_driver()
     try:
         driver.get(URL_MONITOR)
-        time.sleep(10)  # انتظار تحميل الصفحة والبيانات
+        time.sleep(10)  # انتظار تحميل الصفحة
         
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         rows = soup.select('tr.flight-row')
@@ -49,7 +62,6 @@ def check_flights():
                 if len(parts) >= 3:
                     flight_no, status_raw, route = parts[0], parts[1], parts[2]
                     
-                    # تحديد النوع بناءً على التنسيق المطلوب
                     flight_type = "رحلة مغادرة" if "مغادرة" in status_raw else "رحلة وصول"
                     emoji = "🛫" if "مغادرة" in status_raw else "🛬"
                     
@@ -65,11 +77,14 @@ def check_flights():
                     
                     send_telegram_message(message)
                     last_status[flight_id] = info
-                    
     finally:
         driver.quit()
 
 if __name__ == "__main__":
+    # تشغيل Flask في خيط منفصل
+    threading.Thread(target=run_flask).start()
+    
+    # حلقة المراقبة الرئيسية
     while True:
         check_flights()
-        time.sleep(300) # فحص كل 5 دقائق لتقليل استهلاك السيرفر
+        time.sleep(300) # فحص كل 5 دقائق
