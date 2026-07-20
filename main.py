@@ -83,6 +83,7 @@ def check_flights():
                 if isinstance(data, list): 
                     data = data[0]
                 flights = data.get('payload', [])
+                print(f"تم جلب {len(flights)} رحلة بنجاح من {airport['name']}")
                 
                 for flight in flights:
                     flight_date = flight.get('flightDate')
@@ -91,7 +92,7 @@ def check_flights():
                     flight['_airport_name'] = airport["name"]
                     all_fetched_flights.append(flight)
         except Exception as e:
-            print(f"Error fetching {airport['name']}: {e}")
+            print(f"خطأ في جلب بيانات {airport['name']}: {e}")
 
     def parse_flight_time(f):
         d = f.get('flightDate', '9999-12-31')
@@ -102,11 +103,15 @@ def check_flights():
 
     for flight in all_fetched_flights:
         airport_name = flight.get('_airport_name')
-        f_num = flight.get('flightNumber', 'UNKNOWN')
+        f_num = flight.get('flightNumber')
+        if not f_num or f_num == 'Unknown':
+            f_num = flight.get('route', 'UNKNOWN')
+            
         f_date = flight.get('flightDate', '')
         f_time = flight.get('scheduledTime', '')
+        f_type = flight.get('type', '')
         
-        f_id = f"{airport_name}_{f_num}_{f_date}_{f_time}"
+        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
         current_status = flight.get('status')
         
         if sent_notifications.get(f_id) == current_status:
