@@ -9,6 +9,7 @@ TELEGRAM_TOKEN = '8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM'
 CHAT_ID = '-1004481182341'
 URL = 'https://damairport.gov.sy/'
 last_status = {}
+is_first_run = True  # متغير للتأكد من أنها المرة الأولى
 
 app = Flask(__name__)
 
@@ -27,20 +28,32 @@ def send_telegram(text):
         print(f"Telegram Error: {e}")
 
 def check_flights():
+    global is_first_run
     try:
-        # استخدام requests لجلب محتوى الصفحة مباشرة
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(URL, headers=headers, timeout=20)
         soup = BeautifulSoup(response.text, 'html.parser')
         rows = soup.select('tr.flight-row')
         
+        # ترتيب الصفوف حسب الترتيب في الموقع
         for row in rows:
             info = row.get('aria-label', '')
             flight_id = row.get('data-id', '')
             
-            if flight_id and info and last_status.get(flight_id) != info:
-                send_telegram(f"✈️ <b>تحديث حالة الرحلة:</b>\n{info}")
-                last_status[flight_id] = info
+            if flight_id and info:
+                # إذا كانت المرة الأولى، أرسل كل الرحلات بالتسلسل
+                if is_first_run:
+                    send_telegram(f"✈️ <b>رحلة مجدولة:</b>\n{info}")
+                    last_status[flight_id] = info
+                    time.sleep(1) # تأخير بسيط بين كل رسالة لتصل بالترتيب
+                
+                # إذا كانت رحلة سابقة وتغيرت حالتها
+                elif flight_id in last_status and last_status[flight_id] != info:
+                    send_telegram(f"✈️ <b>تحديث حالة الرحلة:</b>\n{info}")
+                    last_status[flight_id] = info
+        
+        is_first_run = False # بعد الانتهاء من أول دورة، نغلق خيار الإرسال الجماعي
+            
     except Exception as e:
         print(f"Check error: {e}")
 
