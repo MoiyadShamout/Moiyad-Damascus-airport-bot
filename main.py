@@ -8,8 +8,7 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = '8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM'
 CHAT_ID = '-1004481182341'
 URL = 'https://damairport.gov.sy/'
-last_status = {'dummy': 'data'} # تغيير هذا السطر مؤقتاً
-is_first_run = True  # متغير للتأكد من أنها المرة الأولى
+last_status = {'dummy': 'data'} 
 
 app = Flask(__name__)
 
@@ -28,31 +27,28 @@ def send_telegram(text):
         print(f"Telegram Error: {e}")
 
 def check_flights():
-    global is_first_run
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(URL, headers=headers, timeout=20)
+        
+        # أداة الفحص (DEBUG)
+        print(f"DEBUG: Response status code: {response.status_code}")
+        print(f"DEBUG: Page content sample: {response.text[:200]}")
+        
         soup = BeautifulSoup(response.text, 'html.parser')
         rows = soup.select('tr.flight-row')
         
-        # ترتيب الصفوف حسب الترتيب في الموقع
+        if not rows:
+            print("DEBUG: No rows found! Check class names.")
+            
         for row in rows:
             info = row.get('aria-label', '')
             flight_id = row.get('data-id', '')
             
             if flight_id and info:
-                # إذا كانت المرة الأولى، أرسل كل الرحلات بالتسلسل
-                if is_first_run:
-                    send_telegram(f"✈️ <b>رحلة مجدولة:</b>\n{info}")
+                if last_status.get(flight_id) != info:
+                    send_telegram(f"✈️ <b>تحديث:</b>\n{info}")
                     last_status[flight_id] = info
-                    time.sleep(1) # تأخير بسيط بين كل رسالة لتصل بالترتيب
-                
-                # إذا كانت رحلة سابقة وتغيرت حالتها
-                elif flight_id in last_status and last_status[flight_id] != info:
-                    send_telegram(f"✈️ <b>تحديث حالة الرحلة:</b>\n{info}")
-                    last_status[flight_id] = info
-        
-        is_first_run = False # بعد الانتهاء من أول دورة، نغلق خيار الإرسال الجماعي
             
     except Exception as e:
         print(f"Check error: {e}")
