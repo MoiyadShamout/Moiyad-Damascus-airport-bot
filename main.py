@@ -5,7 +5,6 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# إعدادات مصادر البيانات للمطارين (دمشق وحلب)
 AIRPORTS_CONFIG = [
     {
         "name": "مطار دمشق الدولي",
@@ -30,7 +29,6 @@ AIRPORTS_CONFIG = [
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
 
-# قاموس لتتبع آخر حالة تم إرسالها لكل رحلة لمنع التكرار
 sent_notifications = {}
 
 def send_telegram(msg):
@@ -75,6 +73,7 @@ def send_telegram_full_details(flight, note, airport_name):
 def check_flights():
     global sent_notifications
     today = datetime.now().strftime('%Y-%m-%d')
+    all_fetched_flights = []
     
     for airport in AIRPORTS_CONFIG:
         try:
@@ -86,29 +85,38 @@ def check_flights():
                 flights = data.get('payload', [])
                 
                 for flight in flights:
-                    # مفتاح فريد لكل رحلة مرتبط باسم المطار ورقم الرحلة
-                    f_id = f"{airport['name']}_{flight.get('flightNumber')}"
-                    current_status = flight.get('status')
                     flight_date = flight.get('flightDate')
-                    
-                    # استبعاد الرحلات القديمة والتركيز على رحلات اليوم فقط
                     if flight_date and flight_date < today:
                         continue
-                    
-                    # منع التكرار: إذا كانت الحالة لم تتغير، لا تقم بإرسال إشعار جديد
-                    if sent_notifications.get(f_id) == current_status:
-                        continue
-                    
-                    note = "رحلة جديدة" if f_id not in sent_notifications else "تحديث حالة الرحلة"
-                    send_telegram_full_details(flight, note, airport["name"])
-                    
-                    # تحديث الحالة المسجلة لمنع التكرار المستقبلي
-                    sent_notifications[f_id] = current_status
-                        
+                    flight['_airport_name'] = airport["name"]
+                    all_fetched_flights.append(flight)
         except Exception as e:
             print(f"Error fetching {airport['name']}: {e}")
 
-# جدولة الفحص كل دقيقتين تلقائياً
+    def parse_flight_time(f):
+        d = f.get('flightDate', '9999-12-31')
+        t = f.get('scheduledTime', '00:00')
+        return f"{d} {t}"
+
+    all_fetched_flights.sort(key=parse_flight_time)
+
+    for flight in all_fetched_flights:
+        airport_name = flight.get('_airport_name')
+        f_num = flight.get('flightNumber', 'UNKNOWN')
+        f_date = flight.get('flightDate', '')
+        f_time = flight.get('scheduledTime', '')
+        
+        f_id = f"{airport_name}_{f_num}_{f_date}_{f_time}"
+        current_status = flight.get('status')
+        
+        if sent_notifications.get(f_id) == current_status:
+            continue
+        
+        note = "رحلة جديدة" if f_id not in sent_notifications else "تحديث حالة الرحلة"
+        send_telegram_full_details(flight, note, airport_name)
+        
+        sent_notifications[f_id] = current_status
+
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
