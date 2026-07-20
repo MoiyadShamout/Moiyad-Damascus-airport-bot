@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = '8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM'
 CHAT_ID = '-1004481182341'
 URL = 'https://damairport.gov.sy/'
-last_status = {}
+last_status = {'dummy': 'data'} # تغيير هذا السطر مؤقتاً
 is_first_run = True  # متغير للتأكد من أنها المرة الأولى
 
 app = Flask(__name__)
