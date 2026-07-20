@@ -5,7 +5,7 @@ from flask import Flask
 app = Flask(__name__)
 
 # تأكد من وضع التوكن الخاص بك هنا بدقة
-TELEGRAM_TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTHO-rquRgB_crKfM"
+TELEGRAM_TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM"
 TELEGRAM_CHAT_ID = "-1004481182341"
 
 def get_flights():
