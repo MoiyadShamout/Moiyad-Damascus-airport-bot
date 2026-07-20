@@ -1,33 +1,50 @@
 import requests
 from flask import Flask
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# الإعدادات
-URL = 'https://damairport.gov.sy/'
+TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
+CHAT_ID = '-1004481182341'
+# الرابط الذي حصلنا عليه
+API_URL = 'https://damairport.gov.sy/api/flights.php?paged=1&page=1&dir=all&wfloor=2026-07-17&dexact=2026-07-20'
+last_flight_ids = set()
 
 @app.route('/')
 def home():
+    check_flights()
+    return "Bot is active and checking flights!"
+
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
+
+def check_flights():
     try:
-        # محاكاة التصفح
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(URL, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # البحث عن كل صفوف الجدول
-        all_tr = soup.select('tr')
-        
-        # استخراج التصنيفات الموجودة في الصفحة
-        classes_found = []
-        for tag in all_tr:
-            if tag.get('class'):
-                classes_found.append(tag.get('class'))
-        
-        # عرض النتائج في المتصفح
-        return f"Found {len(all_tr)} table rows. Classes found: {classes_found}"
+        response = requests.get(API_URL, timeout=10)
+        data = response.json()
+        flights = data.get('flights', [])
+
+        for flight in flights:
+            flight_id = flight.get('id')
+            
+            # معالجة النصوص حسب طلبك
+            status = flight.get('status', '').replace('scheduled', 'on time')
+            
+            # بناء نص الرسالة
+            info = (
+                f"✈️ <b>رحلة جديدة</b>\n"
+                f"رقم الرحلة: {flight.get('flightNumber')}\n"
+                f"من: {flight.get('origin')} إلى: {flight.get('destination')}\n"
+                f"موعد الإقلاع: {flight.get('time')}\n"
+                f"الحالة: {status}"
+            )
+
+            if flight_id and flight_id not in last_flight_ids:
+                send_telegram(info)
+                last_flight_ids.add(flight_id)
+
     except Exception as e:
-        return f"Error: {str(e)}"
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080)
