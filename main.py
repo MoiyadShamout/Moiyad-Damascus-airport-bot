@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 app = Flask(__name__)
 
 # ضع التوكن الصحيح والـ ID الجديد هنا
-TELEGRAM_TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTHO-rquRgB_crKfM"
+TELEGRAM_TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM"
 TELEGRAM_CHAT_ID = "-1004481182341"
 
 def get_flights():
