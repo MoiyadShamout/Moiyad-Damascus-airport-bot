@@ -1,6 +1,7 @@
 import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -15,9 +16,8 @@ HEADERS = {
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
 
-# ذاكرة البوت
-last_flights_data = {}
-is_initialized = False
+# ذاكرة لتخزين آخر حالة تم إرسال إشعار بها
+sent_notifications = {}
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -25,29 +25,18 @@ def send_telegram(msg):
 
 def send_telegram_full_details(flight, note):
     direction = "🛬 رحلة وصول" if flight.get('type') == 'arrival' else "🛫 رحلة مغادرة"
-    
-    # بناء الرسالة باستخدام الحقول الدقيقة المستخرجة من بيانات المطار
     msg = (
         f"<b>⚠️ {note}</b>\n\n"
         f"<b>{direction}</b>\n"
-        f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
         f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
-        f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
+        f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
         f"📍 المسار: {flight.get('route', 'غير متوفر')}\n"
-        f"⏰ الموعد المجدول: {flight.get('scheduledTime', 'غير متوفر')}\n"
+        f"📊 الحالة: <b>{flight.get('status', 'غير متوفر')}</b>"
     )
-    
-    # إضافة الوقت الفعلي فقط إذا توفر
-    actual_time = flight.get('actualTime')
-    if actual_time:
-        msg += f"⌚ الوقت الفعلي: {actual_time}\n"
-        
-    msg += f"📊 الحالة: <b>{flight.get('status', 'غير متوفر')}</b>"
-    
     send_telegram(msg)
 
 def check_flights():
-    global last_flights_data, is_initialized
+    global sent_notifications
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=10)
         if response.status_code == 200:
@@ -55,21 +44,29 @@ def check_flights():
             if isinstance(data, list): data = data[0]
             flights = data.get('payload', [])
             
+            # الحصول على التاريخ الحالي
+            today = datetime.now().strftime('%Y-%m-%d')
+            
             for flight in flights:
                 f_id = flight.get('flightNumber')
                 current_status = flight.get('status')
+                flight_date = flight.get('flightDate')
                 
-                # إذا كانت أول دورة، أرسل قائمة بالرحلات الحالية
-                if not is_initialized:
-                    send_telegram_full_details(flight, "رحلة حالية في الجدول")
-                # إذا تغيرت حالة رحلة نعرفها مسبقاً
-                elif f_id in last_flights_data and last_flights_data[f_id].get('status') != current_status:
-                    send_telegram_full_details(flight, "تحديث حالة الرحلة")
+                # 1. فلتر الرحلات القديمة
+                if flight_date and flight_date < today:
+                    continue
                 
-                # تحديث الذاكرة
-                last_flights_data[f_id] = flight
-            
-            is_initialized = True
+                # 2. منع التكرار لنفس الرحلة والحالة
+                if sent_notifications.get(f_id) == current_status:
+                    continue
+                
+                # 3. تحديد نوع الإشعار
+                note = "رحلة جديدة" if f_id not in sent_notifications else "تحديث حالة الرحلة"
+                send_telegram_full_details(flight, note)
+                
+                # 4. تحديث الذاكرة
+                sent_notifications[f_id] = current_status
+                    
     except Exception as e:
         print(f"Update error: {e}")
 
