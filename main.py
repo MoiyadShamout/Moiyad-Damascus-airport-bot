@@ -6,7 +6,7 @@ app = Flask(__name__)
 
 # تأكد من أن هذه الأرقام هي التي حصلت عليها من BotFather ومن قناتك
 TELEGRAM_TOKEN = "8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM"
-TELEGRAM_CHAT_ID = "-1002237894561"
+TELEGRAM_CHAT_ID = "-1004481182341"
 
 @app.route('/')
 def home():
