@@ -3,3 +3,4 @@ beautifulsoup4
 flask
 selenium
 webdriver-manager
+chromedriver-autoinstaller
