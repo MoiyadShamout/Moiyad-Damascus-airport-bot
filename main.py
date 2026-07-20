@@ -16,7 +16,6 @@ HEADERS = {
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
 
-# ذاكرة لتخزين آخر حالة تم إرسال إشعار بها
 sent_notifications = {}
 
 def send_telegram(msg):
@@ -25,26 +24,41 @@ def send_telegram(msg):
 
 def send_telegram_full_details(flight, note):
     direction = "🛬 رحلة وصول" if flight.get('type') == 'arrival' else "🛫 رحلة مغادرة"
+    
+    # تفاصيل الرحلة
     msg = (
         f"<b>⚠️ {note}</b>\n\n"
         f"<b>{direction}</b>\n"
-        f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
         f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
+        f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
+        f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
         f"📍 المسار: {flight.get('route', 'غير متوفر')}\n"
-        f"📊 الحالة: <b>{flight.get('status', 'غير متوفر')}</b>"
+        f"⏰ الموعد المجدول: {flight.get('scheduledTime', 'غير متوفر')}\n"
     )
+    
+    actual_time = flight.get('actualTime')
+    if actual_time:
+        msg += f"⌚ الوقت الفعلي: {actual_time}\n"
+        
+    msg += f"📊 الحالة: <b>{flight.get('status', 'غير متوفر')}</b>"
+    
     send_telegram(msg)
 
 def check_flights():
     global sent_notifications
     try:
         response = requests.get(API_URL, headers=HEADERS, timeout=10)
+        
+        # أمر طباعة لتصحيح الأخطاء في سجلات Render
         if response.status_code == 200:
             data = response.json()
             if isinstance(data, list): data = data[0]
             flights = data.get('payload', [])
             
-            # الحصول على التاريخ الحالي
+            # طباعة أول رحلة لتحديد أسماء حقول المطارات لاحقاً
+            if flights:
+                print(f"DEBUG_DATA: {flights[0]}")
+            
             today = datetime.now().strftime('%Y-%m-%d')
             
             for flight in flights:
@@ -52,26 +66,21 @@ def check_flights():
                 current_status = flight.get('status')
                 flight_date = flight.get('flightDate')
                 
-                # 1. فلتر الرحلات القديمة
                 if flight_date and flight_date < today:
                     continue
                 
-                # 2. منع التكرار لنفس الرحلة والحالة
                 if sent_notifications.get(f_id) == current_status:
                     continue
                 
-                # 3. تحديد نوع الإشعار
                 note = "رحلة جديدة" if f_id not in sent_notifications else "تحديث حالة الرحلة"
                 send_telegram_full_details(flight, note)
                 
-                # 4. تحديث الذاكرة
                 sent_notifications[f_id] = current_status
                     
     except Exception as e:
         print(f"Update error: {e}")
 
-# جدولة المهام
-scheduler = BackgroundScheduler()
+scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
