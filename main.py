@@ -7,8 +7,8 @@ from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 
 # --- الإعدادات ---
-TELEGRAM_TOKEN = 'YOUR_BOT_TOKEN'
-CHAT_ID = 'YOUR_CHAT_ID'
+TELEGRAM_TOKEN = '8975492791:AAEzDgBx2ZIPrSCylVqTH0-rquRgB_crKfM'
+CHAT_ID = '-1004481182341'
 URL_MONITOR = 'https://damairport.gov.sy/'
 last_status = {}
 
