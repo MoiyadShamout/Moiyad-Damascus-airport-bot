@@ -1,92 +1,80 @@
 import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
+import pytz
 
 app = Flask(__name__)
 
 # الإعدادات
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
-API_URL = 'https://damairport.gov.sy/api/flights.php?paged=1&page=1&dir=all&wfloor=2026-07-17&dexact=2026-07-20'
 
+# الذاكرة لحفظ حالة الرحلات ومنع التكرار
 flights_memory = {}
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
+    try:
+        requests.post(url, data={'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'HTML'})
+    except Exception as e:
+        print(f"Telegram Error: {e}")
 
 def check_flights():
+    # الحصول على تاريخ اليوم بتوقيت دمشق
+    tz = pytz.timezone('Asia/Damascus')
+    today = datetime.now(tz).strftime('%Y-%m-%d')
+    
+    # رابط الـ API الديناميكي لرحلات اليوم
+    api_url = f'https://damairport.gov.sy/api/flights.php?paged=1&page=1&dir=all&wfloor={today}&dexact={today}'
+    
     try:
-        response = requests.get(API_URL, timeout=10)
+        response = requests.get(api_url, timeout=15)
         data = response.json()
         flights = data.get('flights', [])
 
         for flight in flights:
-            unique_id = flight.get('id')
-            raw_status = flight.get('status', '')
+            unique_id = str(flight.get('id'))
+            raw_status = flight.get('status', '').lower()
             
-            # جلب معلومات الصالة والبوابة
-            terminal = flight.get('terminal', '')
-            gate = flight.get('gate', '')
-            
-            # معالجة المصطلحات
+            # معالجة النصوص حسب طلباتك السابقة
             display_status = raw_status.replace('scheduled', 'on time').replace('departed', 'takeoff time').replace('arrived', 'arrival time')
             
-            origin_display = f"{flight.get('originText') or flight.get('origin')} ({flight.get('origin')})"
-            dest_display = f"{flight.get('destinationText') or flight.get('destination')} ({flight.get('destination')})"
-            location_info = f"📍 من مطار: {origin_display}\n📍 إلى مطار: {dest_display}"
-            
-            extra_info = ""
-            if terminal: extra_info += f"🏢 الصالة: {terminal}\n"
-            if gate: extra_info += f"🚪 البوابة: {gate}\n"
-
-            # منطق التوقيت
+            # البيانات الأساسية
+            flight_num = flight.get('flightNumber', 'N/A')
+            airline = flight.get('airline', 'N/A')
+            origin = flight.get('origin', 'N/A')
+            destination = flight.get('destination', 'N/A')
+            time_val = flight.get('time', 'N/A')
             is_arrival = flight.get('direction') == 'arrival'
-            time_label = "الوصول" if is_arrival else "الإقلاع"
             
-            if raw_status == 'delayed':
-                revised_time = flight.get('expectedTime')
-                if revised_time:
-                    time_info = f"⏰ الموعد المجدول: {flight.get('time')}\n⏱️ التوقيت الجديد: {revised_time}"
-                else:
-                    time_info = f"⏰ الموعد المجدول: {flight.get('time')}\n⏱️ التوقيت الجديد المتوقع: (يرجى مراجعة وكيل سفرك)"
-            else:
-                time_info = f"⏰ موعد {time_label}: {flight.get('time')}"
-
-            # تحديد الإيموجي للرحلة
-            direction_label = "رحلة وصول 🛬" if is_arrival else "رحلة مغادرة 🛫"
-
+            # صياغة الرسالة
             info = (
-                f"📅 التاريخ: {flight.get('date')}\n"
-                f"✈️ رقم الرحلة: {flight.get('flightNumber')}\n"
-                f"🏢 الناقل: {flight.get('airline')}\n"
-                f"{location_info}\n"
-                f"{extra_info}"
-                f"{direction_label}\n"
-                f"{time_info}\n"
-                f"📊 الحالة: <b>{display_status}</b>\n"
-                f"🔗 حالة المطار: {raw_status}"
+                f"✈️ الرحلة: {flight_num} ({airline})\n"
+                f"📍 من: {origin} | إلى: {destination}\n"
+                f"⏰ الموعد: {time_val}\n"
+                f"📊 الحالة: <b>{display_status}</b>"
             )
 
-            # المنطق البرمجي لإرسال الإشعار
+            # منطق المقارنة: الإرسال فقط عند وجود رحلة جديدة أو تغير الحالة
             if unique_id not in flights_memory or flights_memory[unique_id] != raw_status:
-                if raw_status == 'boarding':
-                    send_telegram(f"📢 <b>إعلان صعود الركاب (Boarding):</b>\n\n{info}")
-                else:
-                    send_telegram(f"⚠️ <b>تحديث حالة الرحلة:</b>\n\n{info}")
+                prefix = "📢 <b>تحديث جديد للرحلة:</b>" if unique_id in flights_memory else "🆕 <b>رحلة مجدولة لهذا اليوم:</b>"
+                send_telegram(f"{prefix}\n\n{info}")
+                
+                # تحديث الذاكرة
                 flights_memory[unique_id] = raw_status
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Scraping Error: {e}")
 
-# ضبط المؤقت
+# ضبط المؤقت ليعمل كل 5 دقائق
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=check_flights, trigger="interval", minutes=5)
 scheduler.start()
 
 @app.route('/')
 def home():
-    return "Bot is running automatically!"
+    return "Bot is running and monitoring flight statuses!"
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080)
