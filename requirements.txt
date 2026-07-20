@@ -1,4 +1,4 @@
 requests
 flask
 apscheduler
-beautifulsoup4
+pytz
