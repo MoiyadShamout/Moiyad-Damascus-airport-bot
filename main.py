@@ -126,6 +126,9 @@ scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
+# تشغيل الفحص فورا عند إقلاع السيرفر لضمان إرسال الإشعارات دون انتظار
+check_flights()
+
 @app.route('/')
 def home():
     return "Multi-Airport Flight Bot is running perfectly!"
