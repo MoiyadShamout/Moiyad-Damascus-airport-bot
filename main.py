@@ -19,8 +19,6 @@ AIRPORTS_CONFIG = [
         "name": "مطار حلب الدولي",
         "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
         "headers": {
-            "apikey": "sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
-            "Authorization": "Bearer sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "accept": "application/vnd.pgrst.object+json"
         }
     }
