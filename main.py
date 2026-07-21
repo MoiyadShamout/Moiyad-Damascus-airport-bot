@@ -66,7 +66,6 @@ def send_telegram_full_details(flight, note_type, airport_name):
     
     status_text = status_mapping.get(str(raw_status).lower(), raw_status)
     
-    # تخصيص العنوان والإيموجي بناءً على اختيارك
     if note_type == "new":
         header_title = "✅ رحلة جديدة"
     else:
@@ -80,12 +79,12 @@ def send_telegram_full_details(flight, note_type, airport_name):
         f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
-        f"⏰ الموعد: {flight.get('scheduledTime', 'غير متوفر')}\n"
+        f"⏰ الموعد المحدد: {flight.get('scheduledTime', 'غير متوفر')}\n"
     )
     
     actual_time = flight.get('actualTime')
     if actual_time:
-        msg += f"⌚ الوقت الفعلي: {actual_time}\n"
+        msg += f"⌚ الموعد الجديد / الفعلي: <b>{actual_time}</b>\n"
         
     msg += f"📊 الحالة: <b>{status_text}</b>"
     
