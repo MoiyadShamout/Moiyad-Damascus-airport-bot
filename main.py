@@ -51,7 +51,6 @@ def send_telegram_full_details(flight, note, airport_name):
     
     raw_status = flight.get('status', 'scheduled')
     
-    # قاموس تعريب الحالات للإشعارات
     status_mapping = {
         'scheduled': 'في موعدها',
         'on time': 'في موعدها',
@@ -92,16 +91,12 @@ def check_flights():
     
     for airport in AIRPORTS_CONFIG:
         try:
-            print(f"جاري إرسال طلب إلى: {airport['name']} - الرابط: {airport['url']}")
             response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
-            print(f"استجابة {airport['name']}: رمز الحالة {response.status_code}")
-            
             if response.status_code == 200:
                 data = response.json()
                 if isinstance(data, list): 
                     data = data[0] if data else {}
                 flights = data.get('payload', [])
-                print(f"تم جلب {len(flights)} رحلة بنجاح من {airport['name']}")
                 
                 for flight in flights:
                     flight_date = flight.get('flightDate')
@@ -109,10 +104,8 @@ def check_flights():
                         continue
                     flight['_airport_name'] = airport["name"]
                     all_fetched_flights.append(flight)
-            else:
-                print(f"فشل جلب بيانات {airport['name']} برمز خطأ: {response.status_code}")
         except Exception as e:
-            print(f"حدث خطأ استثنائي أثناء جلب بيانات {airport['name']}: {e}")
+            print(f"خطأ في جلب البيانات: {e}")
 
     def parse_flight_time(f):
         d = f.get('flightDate', '9999-12-31')
@@ -131,16 +124,19 @@ def check_flights():
         f_time = flight.get('scheduledTime', '')
         f_type = flight.get('type', '')
         
+        # مفتاح فريد لكل رحلة
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
         current_status = flight.get('status')
         
-        if sent_notifications.get(f_id) == current_status:
-            continue
-        
-        note = "رحلة جديدة" if f_id not in sent_notifications else "تحديث حالة الرحلة"
-        send_telegram_full_details(flight, note, airport_name)
-        
-        sent_notifications[f_id] = current_status
+        # التحقق الذكي: هل هذه الرحلة جديدة كلياً أم تغيرت حالتها؟
+        if f_id not in sent_notifications:
+            # رحلة جديدة تماماً لم تُرسل أبداً
+            send_telegram_full_details(flight, "رحلة جديدة", airport_name)
+            sent_notifications[f_id] = current_status
+        elif sent_notifications[f_id] != current_status:
+            # الرحلة موجودة، لكن حالتها تغيرت (مثلاً من مجدولة إلى متأخرة)
+            send_telegram_full_details(flight, "تحديث حالة الرحلة", airport_name)
+            sent_notifications[f_id] = current_status
 
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
