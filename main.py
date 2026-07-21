@@ -17,10 +17,10 @@ AIRPORTS_CONFIG = [
     },
     {
         "name": "مطار حلب الدولي",
-        "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
+        "url": "https://lahifemguttthywckyml.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
         "headers": {
-            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0Mjk4OTMsImV4cCI6MjA4OTAwOTg5M30.70xYw0b4w6w4O7yXmZzXkL3W4vKzX8k9W3vKzX8k9W3",
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0Mjk4OTMsImV4cCI6MjA4OTAwOTg5M30.70xYw0b4w6w4O7yXmZzXkL3W4vKzX8k9W3vKzX8k9W3",
+            "apikey": "sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
+            "Authorization": "Bearer sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "accept": "application/vnd.pgrst.object+json"
         }
     }
@@ -126,7 +126,6 @@ scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
-# تشغيل الفحص فورا عند إقلاع السيرفر لضمان إرسال الإشعارات دون انتظار
 check_flights()
 
 @app.route('/')
