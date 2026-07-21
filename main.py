@@ -77,11 +77,15 @@ def check_flights():
     
     for airport in AIRPORTS_CONFIG:
         try:
-            response = requests.get(airport["url"], headers=airport["headers"], timeout=10)
+            print(f"جاري إرسال طلب إلى: {airport['name']} - الرابط: {airport['url']}")
+            response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
+            print(f"استجابة {airport['name']}: رمز الحالة {response.status_code}")
+            print(f"محتوى الرد: {response.text}")
+            
             if response.status_code == 200:
                 data = response.json()
                 if isinstance(data, list): 
-                    data = data[0]
+                    data = data[0] if data else {}
                 flights = data.get('payload', [])
                 print(f"تم جلب {len(flights)} رحلة بنجاح من {airport['name']}")
                 
@@ -91,8 +95,10 @@ def check_flights():
                         continue
                     flight['_airport_name'] = airport["name"]
                     all_fetched_flights.append(flight)
+            else:
+                print(f"فشل جلب بيانات {airport['name']} برمز خطأ: {response.status_code}")
         except Exception as e:
-            print(f"خطأ في جلب بيانات {airport['name']}: {e}")
+            print(f"حدث خطأ استثنائي أثناء جلب بيانات {airport['name']}: {e}")
 
     def parse_flight_time(f):
         d = f.get('flightDate', '9999-12-31')
