@@ -44,10 +44,12 @@ def send_telegram_full_details(flight, note_type, airport_name):
         direction = f"🛬 رحلة وصول إلى {airport_name}"
         from_airport = f"مطار {route_info}"
         to_airport = airport_name
+        time_label = "موعد الوصول المحدد"
     else:
         direction = f"🛫 رحلة مغادرة من {airport_name}"
         from_airport = airport_name
         to_airport = f"مطار {route_info}"
+        time_label = "موعد المغادرة المحدد"
     
     raw_status = flight.get('status', 'scheduled')
     
@@ -79,7 +81,7 @@ def send_telegram_full_details(flight, note_type, airport_name):
         f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
-        f"⏰ الموعد المحدد: {flight.get('scheduledTime', 'غير متوفر')}\n"
+        f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
     )
     
     actual_time = flight.get('actualTime')
