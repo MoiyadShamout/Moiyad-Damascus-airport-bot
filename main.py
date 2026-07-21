@@ -2,7 +2,6 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
@@ -18,14 +17,12 @@ AIRPORTS_CONFIG = [
     },
     {
         "name": "مطار حلب الدولي",
-        "url": "https://lahifemguttthywckyml.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
-        "update_url": "https://lahifemguttthywckyml.supabase.co/rest/v1/flight_cache?id=eq.main",
+        "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
         "headers": {
             "apikey": "sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "Authorization": "Bearer sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "accept": "application/vnd.pgrst.object+json"
-        },
-        "scrape_url": "https://aleppoairport.net/?lang=ar"
+        }
     }
 ]
 
@@ -73,91 +70,8 @@ def send_telegram_full_details(flight, note, airport_name):
     
     send_telegram(msg)
 
-def update_aleppo_cache():
-    try:
-        headers_site = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        resp = requests.get("https://aleppoairport.net/?lang=ar", headers=headers_site, timeout=15)
-        print(f"حالة اتصال موقع مطار حلب: {resp.status_code}")
-        
-        if resp.status_code != 200:
-            return
-
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        flights_list = []
-        today_str = datetime.now().strftime('%Y-%m-%d')
-
-        cards = soup.find_all('div', class_=lambda x: x and 'rounded-lg' in x)
-        print(f"عدد البطاقات المكتشفة لمطار حلب: {len(cards)}")
-
-        for card in cards:
-            text_content = card.get_text(separator='|', strip=True)
-            if any(code in text_content for code in ['RJ', 'XY', 'TK', 'G9', 'FZ', 'ME', 'RB', 'AK']):
-                parts = [p.strip() for p in text_content.split('|') if p.strip()]
-                if len(parts) >= 3:
-                    flight_num = "UNKNOWN"
-                    airline = "غير متوفر"
-                    route = "غير متوفر"
-                    sched_time = "12:00"
-                    status = "on time"
-                    
-                    for p in parts:
-                        if any(c.isupper() for c in p) and len(p) <= 7 and any(char.isdigit() for char in p):
-                            flight_num = p
-                        elif "شركة الطيران" in p or len(p) > 5 and any(w in p for w in ["الخطوط", "الملكية", "فلاي", "أناضول", "العربية"]):
-                            airline = p
-                        elif ":" in p and len(p) <= 5:
-                            sched_time = p
-                        elif "وصلت" in p or "متوقع" in p or "مجدول" in p or "مغادرة" in p:
-                            status = p
-                        elif any(city in p for city in ["عمان", "إسطنبول", "الرياض", "أنقرة", "دمشق", "الشارقة", "دبي", "بيروت", "القاهرة"]):
-                            route = p
-
-                    flights_list.append({
-                        "flightNumber": flight_num,
-                        "airline": airline,
-                        "route": route,
-                        "status": "on time" if "وصلت" in status or "مجدول" in status else status,
-                        "scheduledTime": sched_time,
-                        "flightDate": today_str,
-                        "type": "arrival"
-                    })
-
-        if not flights_list:
-            flights_list.append({
-                "flightNumber": "ALE-901",
-                "airline": "مطار حلب الدولي",
-                "route": "دمشق",
-                "status": "on time",
-                "scheduledTime": datetime.now().strftime('%H:%M'),
-                "flightDate": today_str,
-                "type": "arrival"
-            })
-
-        payload_data = {
-            "payload": flights_list,
-            "total_arrivals": len(flights_list),
-            "total_departures": 0,
-            "updated_at": datetime.utcnow().isoformat() + "+00:00"
-        }
-        
-        for airport in AIRPORTS_CONFIG:
-            if airport["name"] == "مطار حلب الدولي":
-                up_headers = airport["headers"].copy()
-                up_headers["Content-Type"] = "application/json"
-                up_headers["Prefer"] = "return=minimal"
-                requests.patch(airport["update_url"], json=payload_data, headers=up_headers, timeout=15)
-                print(f"تم تحديث قاعدة بيانات مطار حلب بنجاح بـ {len(flights_list)} رحلة.")
-                break
-    except Exception as e:
-        print(f"خطأ أثناء تحديث كاش مطار حلب: {e}")
-
 def check_flights():
     global sent_notifications
-    
-    update_aleppo_cache()
-    
     today = datetime.now().strftime('%Y-%m-%d')
     all_fetched_flights = []
     
