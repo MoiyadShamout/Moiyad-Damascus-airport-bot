@@ -22,7 +22,8 @@ AIRPORTS_CONFIG = [
             "apikey": "sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "Authorization": "Bearer sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "accept": "application/vnd.pgrst.object+json"
-        }
+        },
+        "scrape_url": "https://aleppoairport.net/?lang=ar"
     }
 ]
 
@@ -70,6 +71,10 @@ def send_telegram_full_details(flight, note, airport_name):
     
     send_telegram(msg)
 
+def update_aleppo_cache():
+    # دالة لجلب بيانات مطار حلب وتحديث Supabase (يمكن ربطها بمكتبة تحليل النصوص BeautifulSoup لاحقاً إذا لزم الأمر)
+    pass
+
 def check_flights():
     global sent_notifications
     today = datetime.now().strftime('%Y-%m-%d')
@@ -77,6 +82,10 @@ def check_flights():
     
     for airport in AIRPORTS_CONFIG:
         try:
+            # إذا كان المطار بحاجة لتحديث بياناته أولاً
+            if "scrape_url" in airport:
+                update_aleppo_cache()
+
             print(f"جاري إرسال طلب إلى: {airport['name']} - الرابط: {airport['url']}")
             response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
             print(f"استجابة {airport['name']}: رمز الحالة {response.status_code}")
