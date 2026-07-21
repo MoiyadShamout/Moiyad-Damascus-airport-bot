@@ -50,7 +50,21 @@ def send_telegram_full_details(flight, note, airport_name):
         to_airport = f"مطار {route_info}"
     
     raw_status = flight.get('status', 'scheduled')
-    status_text = "on time" if raw_status == 'scheduled' else raw_status
+    
+    # قاموس تعريب الحالات للإشعارات
+    status_mapping = {
+        'scheduled': 'في موعدها',
+        'on time': 'في موعدها',
+        'delayed': 'متأخرة',
+        'cancelled': 'ملغاة',
+        'diverted': 'تم تحويل مسارها',
+        'landed': 'هبطت',
+        'departed': 'أقلعت',
+        'in_flight': 'في الجو',
+        'estimated': 'متوقع'
+    }
+    
+    status_text = status_mapping.get(str(raw_status).lower(), raw_status)
     
     msg = (
         f"<b>⚠️ {note} ({airport_name})</b>\n\n"
