@@ -36,7 +36,7 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'})
 
-def send_telegram_full_details(flight, note, airport_name):
+def send_telegram_full_details(flight, note_type, airport_name):
     f_type = flight.get('type')
     route_info = flight.get('route', 'غير متوفر')
     
@@ -60,13 +60,20 @@ def send_telegram_full_details(flight, note, airport_name):
         'landed': 'هبطت',
         'departed': 'أقلعت',
         'in_flight': 'في الجو',
-        'estimated': 'متوقع'
+        'estimated': 'متوقع',
+        'arrived': 'وصلت'
     }
     
     status_text = status_mapping.get(str(raw_status).lower(), raw_status)
     
+    # تخصيص العنوان والإيموجي بناءً على اختيارك
+    if note_type == "new":
+        header_title = "✅ رحلة جديدة"
+    else:
+        header_title = "⚠️ تحديث حالة الرحلة"
+
     msg = (
-        f"<b>⚠️ {note} ({airport_name})</b>\n\n"
+        f"<b>{header_title} ({airport_name})</b>\n\n"
         f"<b>{direction}</b>\n"
         f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
         f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
@@ -124,18 +131,14 @@ def check_flights():
         f_time = flight.get('scheduledTime', '')
         f_type = flight.get('type', '')
         
-        # مفتاح فريد لكل رحلة
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
         current_status = flight.get('status')
         
-        # التحقق الذكي: هل هذه الرحلة جديدة كلياً أم تغيرت حالتها؟
         if f_id not in sent_notifications:
-            # رحلة جديدة تماماً لم تُرسل أبداً
-            send_telegram_full_details(flight, "رحلة جديدة", airport_name)
+            send_telegram_full_details(flight, "new", airport_name)
             sent_notifications[f_id] = current_status
         elif sent_notifications[f_id] != current_status:
-            # الرحلة موجودة، لكن حالتها تغيرت (مثلاً من مجدولة إلى متأخرة)
-            send_telegram_full_details(flight, "تحديث حالة الرحلة", airport_name)
+            send_telegram_full_details(flight, "update", airport_name)
             sent_notifications[f_id] = current_status
 
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
