@@ -2,6 +2,7 @@ import requests
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
@@ -18,6 +19,7 @@ AIRPORTS_CONFIG = [
     {
         "name": "مطار حلب الدولي",
         "url": "https://lahifemguttthywckyml.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
+        "update_url": "https://lahifemguttthywckyml.supabase.co/rest/v1/flight_cache?id=eq.main",
         "headers": {
             "apikey": "sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
             "Authorization": "Bearer sb_publishable_RXLr7kUNGCfrqWaPqvnPbA_cycYi4Xx",
@@ -72,24 +74,72 @@ def send_telegram_full_details(flight, note, airport_name):
     send_telegram(msg)
 
 def update_aleppo_cache():
-    # دالة لجلب بيانات مطار حلب وتحديث Supabase (يمكن ربطها بمكتبة تحليل النصوص BeautifulSoup لاحقاً إذا لزم الأمر)
-    pass
+    try:
+        headers_site = {'User-Agent': 'Mozilla/5.0'}
+        resp = requests.get("https://aleppoairport.net/?lang=ar", headers=headers_site, timeout=15)
+        if resp.status_code != 200:
+            print("فشل في جلب موقع مطار حلب")
+            return
+
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        flights_list = []
+        today_str = datetime.now().strftime('%Y-%m-%d')
+
+        # استخراج صفوف جدول الرحلات من الموقع
+        rows = soup.find_all('tr')
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) >= 6:
+                flight_number = cols[0].text.strip()
+                airline = cols[1].text.strip()
+                route = cols[2].text.strip()
+                status = cols[3].text.strip()
+                scheduled_time = cols[4].text.strip()
+                
+                flight_data = {
+                    "flightNumber": flight_number if flight_number else "UNKNOWN",
+                    "airline": airline if airline else "غير متوفر",
+                    "route": route if route else "غير متوفر",
+                    "status": "scheduled" if "مجدولة" in status or "on time" in status else status,
+                    "scheduledTime": scheduled_time if scheduled_time else "00:00",
+                    "flightDate": today_str,
+                    "type": "departure" # افتراضي أو يمكن استنتاجه من التبويب
+                }
+                flights_list.append(flight_data)
+
+        # رفع البيانات المحدثة إلى Supabase الخاص بمطار حلب
+        payload_data = {
+            "payload": flights_list,
+            "total_arrivals": 0,
+            "total_departures": len(flights_list),
+            "updated_at": datetime.utcnow().isoformat() + "+00:00"
+        }
+        
+        for airport in AIRPORTS_CONFIG:
+            if airport["name"] == "مطار حلب الدولي":
+                up_headers = airport["headers"].copy()
+                up_headers["Content-Type"] = "application/json"
+                up_headers["Prefer"] = "return=minimal"
+                requests.patch(airport["update_url"], json=payload_data, headers=up_headers, timeout=15)
+                print(f"تم تحديث قاعدة بيانات مطار حلب بنجاح بـ {len(flights_list)} رحلة.")
+                break
+    except Exception as e:
+        print(f"خطأ أثناء تحديث كاش مطار حلب: {e}")
 
 def check_flights():
     global sent_notifications
+    
+    # تحديث بيانات حلب أولاً قبل الفحص
+    update_aleppo_cache()
+    
     today = datetime.now().strftime('%Y-%m-%d')
     all_fetched_flights = []
     
     for airport in AIRPORTS_CONFIG:
         try:
-            # إذا كان المطار بحاجة لتحديث بياناته أولاً
-            if "scrape_url" in airport:
-                update_aleppo_cache()
-
             print(f"جاري إرسال طلب إلى: {airport['name']} - الرابط: {airport['url']}")
             response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
             print(f"استجابة {airport['name']}: رمز الحالة {response.status_code}")
-            print(f"محتوى الرد: {response.text}")
             
             if response.status_code == 200:
                 data = response.json()
