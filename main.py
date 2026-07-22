@@ -1,104 +1,167 @@
-from flask import Flask
-import requests
-import sqlite3
 import os
-import threading
-import time
+import requests
+from flask import Flask
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# إعداد قاعدة البيانات الدائمة على القرص لمنع التكرار حتى بعد إعادة تنشيط البوت
-def init_db():
-    conn = sqlite3.connect('bot_database.db', check_same_thread=False)
-    cursor = conn.cursor()
-    # جدول لتخزين آخر حالة لكل رحلة مع تاريخها لمنع تكرار الإشعارات المطلق
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS flight_last_status (
-            flight_key TEXT PRIMARY KEY,
-            flight_number TEXT,
-            flight_date TEXT,
-            last_status TEXT,
-            last_update_time TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+AIRPORTS_CONFIG = [
+    {
+        "name": "مطار دمشق الدولي",
+        "url": "https://ognrupehzbbckimkaikb.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
+        "headers": {
+            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
+            "accept": "application/vnd.pgrst.object+json"
+        }
+    },
+    {
+        "name": "مطار حلب الدولي",
+        "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
+        "headers": {
+            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
+            "accept": "application/vnd.pgrst.object+json"
+        }
+    }
+]
 
-init_db()
+TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
+CHAT_ID = '-1004481182341'
 
-def send_telegram_message(text):
-    bot_token = os.environ.get('TELEGRAM_BOT_TOKEN')
-    channel_id = os.environ.get('TELEGRAM_CHANNEL_ID')
-    if bot_token and channel_id:
-        telegram_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+sent_notifications = {}
+
+def send_telegram(msg):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    requests.post(url, data={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'})
+
+def send_telegram_full_details(flight, note_type, airport_name):
+    f_type = flight.get('type')
+    route_info = flight.get('route', 'غير متوفر')
+    
+    if f_type == 'arrival':
+        direction = f"🛬 رحلة وصول إلى {airport_name}"
+        from_airport = f"مطار {route_info}"
+        to_airport = airport_name
+        time_label = "موعد الوصول المحدد"
+    else:
+        direction = f"🛫 رحلة مغادرة من {airport_name}"
+        from_airport = airport_name
+        to_airport = f"مطار {route_info}"
+        time_label = "موعد المغادرة المحدد"
+    
+    raw_status = flight.get('status', 'scheduled')
+    
+    status_mapping = {
+        'scheduled': 'في موعدها',
+        'on time': 'في موعدها',
+        'delayed': 'متأخرة',
+        'cancelled': 'ملغاة',
+        'diverted': 'تم تحويل مسارها',
+        'landed': 'هبطت',
+        'departed': 'أقلعت',
+        'in_flight': 'في الجو',
+        'estimated': 'متوقع',
+        'arrived': 'وصلت'
+    }
+    
+    status_text = status_mapping.get(str(raw_status).lower(), raw_status)
+    
+    if note_type == "new":
+        header_title = "✅ رحلة جديدة"
+    else:
+        header_title = "⚠️ تحديث حالة الرحلة"
+
+    msg = (
+        f"<b>{header_title} ({airport_name})</b>\n\n"
+        f"<b>{direction}</b>\n"
+        f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
+        f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
+        f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
+        f"🛫 مغادرة من: {from_airport}\n"
+        f"🛬 متجهة إلى: {to_airport}\n"
+        f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
+    )
+    
+    actual_time = flight.get('actualTime')
+    if actual_time:
+        msg += f"⌚ الموعد الجديد / الفعلي: <b>{actual_time}</b>\n"
+        
+    msg += f"📊 الحالة: <b>{status_text}</b>"
+    
+    send_telegram(msg)
+
+def check_flights():
+    global sent_notifications
+    now = datetime.now()
+    today = now.strftime('%Y-%m-%d')
+    all_fetched_flights = []
+    
+    for airport in AIRPORTS_CONFIG:
         try:
-            requests.post(telegram_url, json={
-                'chat_id': channel_id,
-                'text': text,
-                'parse_mode': 'Markdown'
-            }, timeout=10)
+            response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list): 
+                    data = data[0] if data else {}
+                flights = data.get('payload', [])
+                
+                for flight in flights:
+                    flight_date = flight.get('flightDate')
+                    if flight_date and flight_date < today:
+                        continue
+                    flight['_airport_name'] = airport["name"]
+                    all_fetched_flights.append(flight)
         except Exception as e:
-            print(f"Telegram error: {e}")
+            print(f"خطأ في جلب البيانات: {e}")
 
-# دالة فحص الرحلات مع منع التكرار المطلق وحفظ الحالة بشكل دائم
-def check_flights_loop():
-    while True:
+    def parse_flight_time(f):
+        d = f.get('flightDate', '9999-12-31')
+        t = f.get('scheduledTime', '00:00')
+        return f"{d} {t}"
+
+    all_fetched_flights.sort(key=parse_flight_time)
+
+    for flight in all_fetched_flights:
+        airport_name = flight.get('_airport_name')
+        f_num = flight.get('flightNumber')
+        if not f_num or f_num == 'Unknown':
+            f_num = flight.get('route', 'UNKNOWN')
+            
+        f_date = flight.get('flightDate', '')
+        f_time = flight.get('scheduledTime', '')
+        f_type = flight.get('type', '')
+        
+        # فلترة إضافية لمنع إرسال الرحلات التي مضى على موعدها أكثر من ساعتين لتجنب الإشعارات المتأخرة جداً
         try:
-            # بيانات تجريبية للرحلة (يمكنك ربطها بسحب البيانات الفعلي لاحقاً)
-            flight_number = "VF341"
-            flight_date = "22-07-2026"
-            current_status = "في الجو"  # أو "في موعدها"
-            update_time = "09:22"
-            
-            # مفتاح فريد يدمج رقم الرحلة مع تاريخها لمنع أي تداخل
-            flight_key = f"{flight_number}_{flight_date}"
-            
-            conn = sqlite3.connect('bot_database.db', check_same_thread=False)
-            cursor = conn.cursor()
-            
-            # التحقق مما إذا كانت هذه الرحلة وتاريخها قد أرسلت مسبقاً
-            cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_key = ?", (flight_key,))
-            row = cursor.fetchone()
-            
-            if row is None:
-                # إذا كانت المرة الأولى للرحلة بهذا التاريخ، يتم تخزينها وإرسال الإشعار
-                cursor.execute("""
-                    INSERT INTO flight_last_status (flight_key, flight_number, flight_date, last_status, last_update_time) 
-                    VALUES (?, ?, ?, ?, ?)
-                """, (flight_key, flight_number, flight_date, current_status, update_time))
-                conn.commit()
-                
-                message = f"⚠️ *تحديث حالة الرحلة (مطار حلب الدولي)*\n\n✈️ رحلة مغادرة من مطار حلب الدولي\n📅 التاريخ: {flight_date}\n✈️ رقم الرحلة: {flight_number}\n🏢 الناقل: AJet\n🛫 مغادرة من: مطار حلب الدولي\n🛬 متجهة إلى: مطار Istanbul\n⏰ موعد المغادرة المحدد: 09:10\n⌚ وقت الإقلاع: {update_time}\n📊 الحالة: {current_status}"
-                send_telegram_message(message)
-                
-            else:
-                last_status = row[0]
-                # الشرط الحاسم: لا يُرسل أي إشعار نهائياً إلا إذا تغيرت الحالة الفعلية مقارنة بآخر حالة مسجلة
-                if last_status != current_status:
-                    cursor.execute("""
-                        UPDATE flight_last_status 
-                        SET last_status = ?, last_update_time = ? 
-                        WHERE flight_key = ?
-                    """, (current_status, update_time, flight_key))
-                    conn.commit()
-                    
-                    message = f"⚠️ *تحديث حالة الرحلة (مطار حلب الدولي)*\n\n✈️ رحلة مغادرة من مطار حلب الدولي\n📅 التاريخ: {flight_date}\n✈️ رقم الرحلة: {flight_number}\n🏢 الناقل: AJet\n🛫 مغادرة من: مطار حلب الدولي\n🛬 متجهة إلى: مطار Istanbul\n⏰ موعد المغادرة المحدد: 09:10\n⌚ وقت الإقلاع: {update_time}\n📊 الحالة: {current_status}"
-                    send_telegram_message(message)
-            
-            conn.close()
-            
-        except Exception as e:
-            print(f"Error in flight check loop: {e}")
-            
-        # فترة الانتظار بين عمليات الفحص (مثلاً كل 30 دقيقة)
-        time.sleep(1800)
+            flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
+            # إذا كان موعد الرحلة قد مضى عليه أكثر من ساعتين، نتجاوزه ولا نرسل إشعاراً متأخراً عنه
+            if now > flight_datetime + timedelta(hours=2):
+                continue
+        except:
+            pass
 
-# تشغيل حلقة الفحص في الخلفية بشكل آمن ودائم
-threading.Thread(target=check_flights_loop, daemon=True).start()
+        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
+        current_status = flight.get('status')
+        
+        if f_id not in sent_notifications:
+            send_telegram_full_details(flight, "new", airport_name)
+            sent_notifications[f_id] = current_status
+        elif sent_notifications[f_id] != current_status:
+            send_telegram_full_details(flight, "update", airport_name)
+            sent_notifications[f_id] = current_status
+
+scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
+scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
+scheduler.start()
+
+check_flights()
 
 @app.route('/')
 def home():
-    return "Syrian Tourism & SANA Bot: Running with permanent duplicate-prevention!"
+    return "Multi-Airport Flight Bot is running perfectly!"
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
