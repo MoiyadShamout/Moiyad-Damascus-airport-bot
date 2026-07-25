@@ -1,167 +1,339 @@
+# -*- coding: utf-8 -*-
 import os
+import time
+import logging
+from datetime import datetime
+import threading
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from bs4 import BeautifulSoup
+import psycopg2
 from flask import Flask
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
+import urllib3
+from urllib.parse import urljoin, unquote
+import re
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 app = Flask(__name__)
 
-AIRPORTS_CONFIG = [
-    {
-        "name": "مطار دمشق الدولي",
-        "url": "https://ognrupehzbbckimkaikb.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
-        "headers": {
-            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
-            "accept": "application/vnd.pgrst.object+json"
-        }
-    },
-    {
-        "name": "مطار حلب الدولي",
-        "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
-        "headers": {
-            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-            "accept": "application/vnd.pgrst.object+json"
-        }
-    }
-]
-
-TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
-CHAT_ID = '-1004481182341'
-
-sent_notifications = {}
-
-def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'})
-
-def send_telegram_full_details(flight, note_type, airport_name):
-    f_type = flight.get('type')
-    route_info = flight.get('route', 'غير متوفر')
-    
-    if f_type == 'arrival':
-        direction = f"🛬 رحلة وصول إلى {airport_name}"
-        from_airport = f"مطار {route_info}"
-        to_airport = airport_name
-        time_label = "موعد الوصول المحدد"
-    else:
-        direction = f"🛫 رحلة مغادرة من {airport_name}"
-        from_airport = airport_name
-        to_airport = f"مطار {route_info}"
-        time_label = "موعد المغادرة المحدد"
-    
-    raw_status = flight.get('status', 'scheduled')
-    
-    status_mapping = {
-        'scheduled': 'في موعدها',
-        'on time': 'في موعدها',
-        'delayed': 'متأخرة',
-        'cancelled': 'ملغاة',
-        'diverted': 'تم تحويل مسارها',
-        'landed': 'هبطت',
-        'departed': 'أقلعت',
-        'in_flight': 'في الجو',
-        'estimated': 'متوقع',
-        'arrived': 'وصلت'
-    }
-    
-    status_text = status_mapping.get(str(raw_status).lower(), raw_status)
-    
-    if note_type == "new":
-        header_title = "✅ رحلة جديدة"
-    else:
-        header_title = "⚠️ تحديث حالة الرحلة"
-
-    msg = (
-        f"<b>{header_title} ({airport_name})</b>\n\n"
-        f"<b>{direction}</b>\n"
-        f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
-        f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
-        f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
-        f"🛫 مغادرة من: {from_airport}\n"
-        f"🛬 متجهة إلى: {to_airport}\n"
-        f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
-    )
-    
-    actual_time = flight.get('actualTime')
-    if actual_time:
-        msg += f"⌚ الموعد الجديد / الفعلي: <b>{actual_time}</b>\n"
-        
-    msg += f"📊 الحالة: <b>{status_text}</b>"
-    
-    send_telegram(msg)
-
-def check_flights():
-    global sent_notifications
-    now = datetime.now()
-    today = now.strftime('%Y-%m-%d')
-    all_fetched_flights = []
-    
-    for airport in AIRPORTS_CONFIG:
-        try:
-            response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if isinstance(data, list): 
-                    data = data[0] if data else {}
-                flights = data.get('payload', [])
-                
-                for flight in flights:
-                    flight_date = flight.get('flightDate')
-                    if flight_date and flight_date < today:
-                        continue
-                    flight['_airport_name'] = airport["name"]
-                    all_fetched_flights.append(flight)
-        except Exception as e:
-            print(f"خطأ في جلب البيانات: {e}")
-
-    def parse_flight_time(f):
-        d = f.get('flightDate', '9999-12-31')
-        t = f.get('scheduledTime', '00:00')
-        return f"{d} {t}"
-
-    all_fetched_flights.sort(key=parse_flight_time)
-
-    for flight in all_fetched_flights:
-        airport_name = flight.get('_airport_name')
-        f_num = flight.get('flightNumber')
-        if not f_num or f_num == 'Unknown':
-            f_num = flight.get('route', 'UNKNOWN')
-            
-        f_date = flight.get('flightDate', '')
-        f_time = flight.get('scheduledTime', '')
-        f_type = flight.get('type', '')
-        
-        # فلترة إضافية لمنع إرسال الرحلات التي مضى على موعدها أكثر من ساعتين لتجنب الإشعارات المتأخرة جداً
-        try:
-            flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
-            # إذا كان موعد الرحلة قد مضى عليه أكثر من ساعتين، نتجاوزه ولا نرسل إشعاراً متأخراً عنه
-            if now > flight_datetime + timedelta(hours=2):
-                continue
-        except:
-            pass
-
-        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
-        current_status = flight.get('status')
-        
-        if f_id not in sent_notifications:
-            send_telegram_full_details(flight, "new", airport_name)
-            sent_notifications[f_id] = current_status
-        elif sent_notifications[f_id] != current_status:
-            send_telegram_full_details(flight, "update", airport_name)
-            sent_notifications[f_id] = current_status
-
-scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
-scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
-scheduler.start()
-
-check_flights()
-
 @app.route('/')
 def home():
-    return "Multi-Airport Flight Bot is running perfectly!"
+    return {"status": "active", "message": "Syrian Tourism Bot V16 is running perfectly!"}, 200
+
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+SOURCES = [
+    {"name": "وكالة الأنباء السورية - سانا (قسم السياحة)", "type": "sana", "url": "https://sana.sy/tourism/"},
+    {"name": "وزارة السياحة السورية", "type": "mots", "url": "https://mots.gov.sy/"},
+    {"name": "عنب بلدي", "type": "enab", "url": "https://www.enabbaladi.net/category/mix/tourism/"},
+    {"name": "تلفزيون سوريا", "type": "syriatv", "url": "https://www.syria.tv/tag/السياحة"},
+    {"name": "سيرياستيبس", "type": "syriasteps", "url": "https://www.syriasteps.com/index.php?m=154"},
+    {"name": "سيريان ديز", "type": "syriandays", "url": "https://www.syriandays.com/index.php?page=show&select_page=52"},
+    {"name": "جهينة نيوز", "type": "jpnews", "url": "https://jpnews-sy.com/ar/cats.php?subcat=31"},
+    {"name": "جريدة الثورة", "type": "thawra", "url": "https://thawra.sy/"}
+]
+
+current_source_index = 0
+
+TOURISM_KEYWORDS = [
+    "سياحة", "سياحي", "سياحية", "آثار", "أثري", "فندق", "فنادق", "منتجع", "منتجعات", 
+    "طيران", "مطار", "رحلة", "رحلات", "سفر", "مسافرين", "شاطئ", "شواطئ", "معالم", 
+    "ترفيه", "قلعة", "قلاع", "وزير السياحة", "وزارة السياحة",
+    "tourism", "tourist", "travel", "hotel", "resort", "airline", "airport", "trip", "destination", "heritage", "antiquity"
+]
+
+def is_tourism_related(text):
+    if not text:
+        return False
+    text_lower = text.lower()
+    for kw in TOURISM_KEYWORDS:
+        if kw in text_lower:
+            return True
+    return False
+
+def get_robust_session():
+    session = requests.Session()
+    retries = Retry(total=1, backoff_factor=1)
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+    session.mount('http://', HTTPAdapter(max_retries=retries))
+    return session
+
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'ar,en-US;q=0.7,en;q=0.3'
+}
+
+def init_db():
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        cur = conn.cursor()
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS news_db_v16 (
+                id SERIAL PRIMARY KEY,
+                news_url TEXT UNIQUE,
+                title TEXT,
+                source TEXT DEFAULT '',
+                pub_date TEXT DEFAULT '',
+                full_text TEXT,
+                media_url TEXT,
+                status TEXT DEFAULT 'pending'
+            )
+        ''')
+        conn.commit()
+        cur.close()
+        conn.close()
+        logging.info("🚀 تم تهيئة قاعدة البيانات بنجاح.")
+    except Exception as e:
+        logging.error(f"❌ خطأ في قاعدة البيانات: {e}")
+
+def get_source_tags(source_name):
+    if "سانا" in source_name: return "#السياحة_السورية #وكالة_سانا #سوريا"
+    if "عنب بلدي" in source_name: return "#السياحة_السورية #عنب_بلدي #سوريا"
+    if "تلفزيون سوريا" in source_name: return "#السياحة_السورية #تلفزيون_سوريا #سوريا"
+    if "سيرياستيبس" in source_name: return "#السياحة_السورية #سيرياستيبس #سوريا"
+    if "سيريان ديز" in source_name: return "#السياحة_السورية #سيريان_ديز #سوريا"
+    if "جهينة نيوز" in source_name: return "#السياحة_السورية #جهينة_نيوز #سوريا"
+    if "الثورة" in source_name: return "#السياحة_السورية #جريدة_الثورة #سوريا"
+    if "وزارة السياحة" in source_name: return "#السياحة_السورية #وزارة_السياحة #سوريا"
+    return "#السياحة_السورية #سوريا"
+
+def extract_article_details(url):
+    session = get_robust_session()
+    img_url, full_text, pub_date = None, "", ""
+    try:
+        resp = session.get(url, headers=HEADERS, timeout=12, verify=False)
+        if resp.encoding is None or resp.encoding.lower() == 'iso-8859-1':
+            resp.encoding = resp.apparent_encoding
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            
+            # 1. استخراج الصورة بذكاء
+            og_image = soup.find('meta', property='og:image') or soup.find('meta', attrs={'name': 'twitter:image'})
+            if og_image and og_image.get('content'):
+                img_url = og_image['content']
+            
+            if not img_url:
+                for img in soup.find_all('img'):
+                    src = img.get('src')
+                    if src and not any(skip_word in src.lower() for skip_word in ['logo', 'icon', 'banner', 'button', 'menu', 'avatar']):
+                        img_url = src
+                        break 
+
+            # تصحيح الروابط النسبية
+            if img_url:
+                img_url = urljoin(url, img_url).replace(" ", "%20")
+
+            # 2. استخراج التاريخ
+            time_tag = soup.find('time') or soup.find(class_=['date', 'post-date', 'publish-date', 'time', 'article-date', 'published'])
+            if time_tag:
+                pub_date = time_tag.get_text(strip=True)
+            else:
+                page_text_all = soup.get_text()
+                date_match = re.search(r'\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}[-/]\d{1,2}[-/]\d{4}\b', page_text_all)
+                if date_match:
+                    pub_date = date_match.group(0)
+
+            # 3. استخراج النص التفصيلي
+            paragraphs = soup.find_all(['p', 'div'])
+            extracted_texts = []
+            
+            for p in paragraphs:
+                if p.name == 'div' and p.find(['table', 'ul']):
+                    continue
+                    
+                txt = p.get_text(separator=' ', strip=True)
+                
+                if len(txt) > 45 and txt not in extracted_texts and "حقوق النشر" not in txt and "جميع الحقوق" not in txt:
+                    full_text += txt + "\n\n"
+                    extracted_texts.append(txt)
+                    
+                if len(full_text) > 850:
+                    break
+                    
+            if len(full_text) > 900:
+                full_text = full_text[:895] + "..."
+                
+    except Exception as e:
+        logging.error(f"Error extracting details from {url}: {e}")
+    
+    if not pub_date or len(pub_date.strip()) < 3:
+        pub_date = "لم يتم تحديد التاريخ"
+
+    return img_url, full_text.strip(), pub_date.strip()
+
+def send_to_telegram(title, full_text, link, media_url, pub_date="", source=""):
+    decoded_link = unquote(link)
+    hashtags = get_source_tags(source)
+    
+    caption = f"مصدر المنشور: {source}\n"
+    caption += f"تاريخ النشر: {pub_date}\n\n"
+    caption += f"{title}\n\n"
+    
+    if full_text:
+        caption += f"{full_text}\n\n"
+        
+    caption += "يمكنكم متابعة تفاصيل الخبر رسمياً عبر الرابط أدناه:\n"
+    caption += f"{decoded_link}\n\n"
+    caption += hashtags
+
+    try:
+        session = get_robust_session()
+        sent = False
+        is_pdf = media_url and media_url.lower().endswith('.pdf')
+        
+        if is_pdf:
+            res = session.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument", 
+                               json={"chat_id": TELEGRAM_CHANNEL_ID, "document": media_url, "caption": caption}, timeout=15)
+        elif media_url:
+            res = session.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto", 
+                               json={"chat_id": TELEGRAM_CHANNEL_ID, "photo": media_url, "caption": caption}, timeout=15)
+            if res.status_code != 200:
+                res = session.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                                   json={"chat_id": TELEGRAM_CHANNEL_ID, "text": caption, "disable_web_page_preview": False}, timeout=15)
+        else:
+            res = session.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                               json={"chat_id": TELEGRAM_CHANNEL_ID, "text": caption, "disable_web_page_preview": False}, timeout=15)
+
+        if res and res.status_code == 200:
+            logging.info(f"✅ تم النشر بنجاح: {title[:30]}")
+            sent = True
+        return sent
+    except Exception as e:
+        logging.error(f"❌ خطأ في الإرسال لتيليجرام: {e}")
+        return False
+
+def save_to_db(news_url, title, source_name, media_url=None, skip_extract=False):
+    if not title or len(title) < 10: return False
+    
+    needs_keyword_check = True
+    if "عنب بلدي" in source_name or "سانا" in source_name or "وزارة السياحة" in source_name:
+        needs_keyword_check = False
+        
+    if needs_keyword_check and not is_tourism_related(title): return False
+
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM news_db_v16 WHERE news_url = %s", (news_url,))
+        if not cur.fetchone():
+            fetched_media, fetched_text, fetched_date = None, "", ""
+            if not skip_extract:
+                fetched_media, fetched_text, fetched_date = extract_article_details(news_url)
+            
+            final_media = fetched_media if fetched_media else media_url
+            final_date = fetched_date if fetched_date else "لم يتم تحديد التاريخ"
+            
+            cur.execute(
+                "INSERT INTO news_db_v16 (news_url, title, full_text, media_url, source, pub_date, status) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (news_url, title, fetched_text, final_media, source_name, final_date, 'pending')
+            )
+            conn.commit()
+            return True
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+    return False
+
+def fetch_source_news(source_info):
+    name = source_info["name"]
+    url = source_info["url"]
+    stype = source_info["type"]
+    session = get_robust_session()
+    
+    try:
+        resp = session.get(url, headers=HEADERS, timeout=15, verify=False)
+        if resp.encoding is None or resp.encoding.lower() == 'iso-8859-1':
+            resp.encoding = resp.apparent_encoding
+            
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            count = 0
+            
+            if stype == 'mots':
+                for item in soup.find_all('a', href=True):
+                    if count >= 1: break
+                    title = item.get_text(strip=True)
+                    link = item['href']
+                    if '.pdf' in link.lower():
+                        full_link = urljoin(url, link)
+                        title = title or "وثيقة رسمية من وزارة السياحة"
+                        if save_to_db(full_link, title, name, media_url=full_link, skip_extract=True): count += 1
+                    elif len(title) > 20 and not link.startswith('#') and link != '/':
+                        full_link = urljoin(url, link)
+                        if save_to_db(full_link, title, name): count += 1
+                        
+            elif stype == 'sana':
+                for item in soup.find_all('h3', class_='story-title'):
+                    if count >= 1: break 
+                    a_tag = item.find('a', href=True)
+                    if a_tag:
+                        title = a_tag.get_text(strip=True)
+                        link = a_tag['href']
+                        if save_to_db(link, title, name): count += 1
+            else:
+                for item in soup.find_all('a', href=True):
+                    if count >= 1: break 
+                    title = item.get_text(strip=True)
+                    link = item['href']
+                    if len(title) > 25 and link and link != '/' and not link.startswith('#'):
+                        full_link = urljoin(url, link)
+                        if save_to_db(full_link, title, name): count += 1
+                            
+    except Exception as e:
+        logging.error(f"⚠️ خطأ أثناء فحص المصدر {name}: {str(e)[:50]}")
+
+def process_pending_news():
+    try:
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        cur = conn.cursor()
+        cur.execute("SELECT id, news_url, title, full_text, media_url, pub_date, source FROM news_db_v16 WHERE status = 'pending' ORDER BY id ASC LIMIT 1")
+        row = cur.fetchone()
+        if row:
+            nid, nlink, ntitle, ntext, nmedia, ndate, nsource = row
+            if send_to_telegram(ntitle, ntext, nlink, nmedia, ndate, nsource):
+                cur.execute("UPDATE news_db_v16 SET status = 'sent' WHERE id = %s", (nid,))
+                conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error processing pending: {e}")
+
+def background_worker():
+    global current_source_index
+    
+    logging.info("🚀 جاري بدء تشغيل البوت V16 ...")
+    active = SOURCES[current_source_index]
+    fetch_source_news(active)
+    process_pending_news()
+    current_source_index = (current_source_index + 1) % len(SOURCES)
+
+    while True:
+        try:
+            active = SOURCES[current_source_index]
+            logging.info(f"🔎 جاري فحص المصدر: {active['name']} ...")
+            fetch_source_news(active)
+            current_source_index = (current_source_index + 1) % len(SOURCES)
+            process_pending_news()
+            
+        except Exception as e:
+            logging.error(f"Worker error: {e}")
+        
+        logging.info("⏳ الانتظار لمدة 30 دقيقة للفحص القادم...")
+        time.sleep(1800)
+
+def start_bot():
+    init_db()
+    threading.Thread(target=background_worker, daemon=True).start()
+
+start_bot()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
