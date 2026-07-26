@@ -7,9 +7,13 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# --- إعداد قاعدة البيانات الدائمة لمنع التكرار ---
+# --- إعداد قاعدة البيانات مع حماية القفل (Timeout) ---
+def get_db_connection():
+    conn = sqlite3.connect('bot_database.db', timeout=30.0, check_same_thread=False)
+    return conn
+
 def init_db():
-    conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS flight_last_status (
@@ -48,7 +52,10 @@ CHAT_ID = '-1004481182341'
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'})
+    try:
+        requests.post(url, data={'chat_id': CHAT_ID, 'text': msg, 'parse_mode': 'HTML'}, timeout=10)
+    except Exception as e:
+        print(f"Telegram Error: {e}")
 
 def send_telegram_full_details(flight, note_type, airport_name):
     f_type = flight.get('type')
@@ -81,7 +88,6 @@ def send_telegram_full_details(flight, note_type, airport_name):
     }
     
     status_text = status_mapping.get(str(raw_status).lower(), raw_status)
-    
     header_title = "✅ رحلة جديدة" if note_type == "new" else "⚠️ تحديث حالة الرحلة"
 
     msg = (
@@ -150,7 +156,7 @@ def check_flights():
 
     all_fetched_flights.sort(key=parse_flight_time)
 
-    conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     for flight in all_fetched_flights:
@@ -181,7 +187,7 @@ def check_flights():
         
         if row is None:
             send_telegram_full_details(flight, "new", airport_name)
-            cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
+            cursor.execute("INSERT OR REPLACE INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
             conn.commit()
         elif row[0] != current_state:
             send_telegram_full_details(flight, "update", airport_name)
@@ -194,12 +200,10 @@ scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
-check_flights()
-
 @app.route('/')
 def home():
-    return "Multi-Airport Flight Bot is running with full details!"
+    return "Multi-Airport Flight Bot is running successfully!"
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
