@@ -1,10 +1,27 @@
 import os
 import requests
+import sqlite3
 from flask import Flask
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
+
+# --- 1. إعداد قاعدة البيانات الدائمة لمنع التكرار ---
+def init_db():
+    conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS flight_last_status (
+            flight_id TEXT PRIMARY KEY,
+            last_status TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+init_db()
+# ------------------------------------------------
 
 AIRPORTS_CONFIG = [
     {
@@ -29,8 +46,6 @@ AIRPORTS_CONFIG = [
 
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
-
-sent_notifications = {}
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -68,6 +83,15 @@ def send_telegram_full_details(flight, note_type, airport_name):
     
     status_text = status_mapping.get(str(raw_status).lower(), raw_status)
     
+    # --- 2. التعديل المطلوب: إضافة وقت التأخير في نفس الخانة بجانب الحالة ---
+    delay_info = flight.get('delay')
+    if not delay_info:
+        delay_info = flight.get('remark')
+        
+    if delay_info:
+        status_text += f" ({delay_info})"
+    # ----------------------------------------------------------------------
+    
     if note_type == "new":
         header_title = "✅ رحلة جديدة"
     else:
@@ -93,7 +117,6 @@ def send_telegram_full_details(flight, note_type, airport_name):
     send_telegram(msg)
 
 def check_flights():
-    global sent_notifications
     now = datetime.now()
     today = now.strftime('%Y-%m-%d')
     all_fetched_flights = []
@@ -123,6 +146,10 @@ def check_flights():
 
     all_fetched_flights.sort(key=parse_flight_time)
 
+    # الاتصال بقاعدة البيانات الدائمة لمنع التكرار
+    conn = sqlite3.connect('bot_database.db', check_same_thread=False)
+    cursor = conn.cursor()
+
     for flight in all_fetched_flights:
         airport_name = flight.get('_airport_name')
         f_num = flight.get('flightNumber')
@@ -133,24 +160,33 @@ def check_flights():
         f_time = flight.get('scheduledTime', '')
         f_type = flight.get('type', '')
         
-        # فلترة إضافية لمنع إرسال الرحلات التي مضى على موعدها أكثر من ساعتين لتجنب الإشعارات المتأخرة جداً
         try:
             flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
-            # إذا كان موعد الرحلة قد مضى عليه أكثر من ساعتين، نتجاوزه ولا نرسل إشعاراً متأخراً عنه
             if now > flight_datetime + timedelta(hours=2):
                 continue
         except:
             pass
 
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
-        current_status = flight.get('status')
         
-        if f_id not in sent_notifications:
+        raw_status = flight.get('status', '')
+        delay_info = flight.get('delay', '') or flight.get('remark', '')
+        # تتبع الحالة مدمجة مع التأخير، ليرسل إشعاراً جديداً إذا تغير وقت التأخير فقط
+        current_state = f"{raw_status}_{delay_info}"
+        
+        cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
+        row = cursor.fetchone()
+        
+        if row is None:
             send_telegram_full_details(flight, "new", airport_name)
-            sent_notifications[f_id] = current_status
-        elif sent_notifications[f_id] != current_status:
+            cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
+            conn.commit()
+        elif row[0] != current_state:
             send_telegram_full_details(flight, "update", airport_name)
-            sent_notifications[f_id] = current_status
+            cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_state, f_id))
+            conn.commit()
+
+    conn.close()
 
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
@@ -160,7 +196,7 @@ check_flights()
 
 @app.route('/')
 def home():
-    return "Multi-Airport Flight Bot is running perfectly!"
+    return "Multi-Airport Flight Bot is running perfectly with DB and Delay tracking!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
