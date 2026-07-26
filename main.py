@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# --- 1. إعداد قاعدة البيانات الدائمة لمنع التكرار ---
+# --- إعداد قاعدة البيانات الدائمة لمنع التكرار ---
 def init_db():
     conn = sqlite3.connect('bot_database.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -21,7 +21,6 @@ def init_db():
     conn.close()
 
 init_db()
-# ------------------------------------------------
 
 AIRPORTS_CONFIG = [
     {
@@ -83,19 +82,7 @@ def send_telegram_full_details(flight, note_type, airport_name):
     
     status_text = status_mapping.get(str(raw_status).lower(), raw_status)
     
-    # --- 2. التعديل المطلوب: إضافة وقت التأخير في نفس الخانة بجانب الحالة ---
-    delay_info = flight.get('delay')
-    if not delay_info:
-        delay_info = flight.get('remark')
-        
-    if delay_info:
-        status_text += f" ({delay_info})"
-    # ----------------------------------------------------------------------
-    
-    if note_type == "new":
-        header_title = "✅ رحلة جديدة"
-    else:
-        header_title = "⚠️ تحديث حالة الرحلة"
+    header_title = "✅ رحلة جديدة" if note_type == "new" else "⚠️ تحديث حالة الرحلة"
 
     msg = (
         f"<b>{header_title} ({airport_name})</b>\n\n"
@@ -103,6 +90,7 @@ def send_telegram_full_details(flight, note_type, airport_name):
         f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
         f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
         f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
+        f"🛩️ طراز الطائرة: {flight.get('aircraft', 'غير متوفر')}\n"
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
         f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
@@ -110,10 +98,26 @@ def send_telegram_full_details(flight, note_type, airport_name):
     
     actual_time = flight.get('actualTime')
     if actual_time:
-        msg += f"⌚ الموعد الجديد / الفعلي: <b>{actual_time}</b>\n"
+        msg += f"⌚ الوقت الفعلي: <b>{actual_time}</b>\n"
         
-    msg += f"📊 الحالة: <b>{status_text}</b>"
+    estimated_time = flight.get('estimatedTime')
+    if estimated_time and not actual_time:
+        msg += f"⌚ الوقت المتوقع: <b>{estimated_time}</b>\n"
+        
+    msg += f"📊 الحالة: <b>{status_text}</b>\n"
     
+    delay_info = flight.get('delay')
+    if delay_info:
+        msg += f"⏱️ مدة التأخير: <b>{delay_info} دقيقة</b>\n"
+        
+    remark_info = flight.get('remark')
+    if remark_info:
+        msg += f"📝 ملاحظات: <b>{remark_info}</b>\n"
+        
+    country_code = flight.get('countryCode')
+    if country_code:
+        msg += f"🌐 رمز الدولة: {country_code.upper()}\n"
+
     send_telegram(msg)
 
 def check_flights():
@@ -146,7 +150,6 @@ def check_flights():
 
     all_fetched_flights.sort(key=parse_flight_time)
 
-    # الاتصال بقاعدة البيانات الدائمة لمنع التكرار
     conn = sqlite3.connect('bot_database.db', check_same_thread=False)
     cursor = conn.cursor()
 
@@ -162,7 +165,7 @@ def check_flights():
         
         try:
             flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
-            if now > flight_datetime + timedelta(hours=2):
+            if now > flight_datetime + timedelta(hours=15):
                 continue
         except:
             pass
@@ -171,7 +174,6 @@ def check_flights():
         
         raw_status = flight.get('status', '')
         delay_info = flight.get('delay', '') or flight.get('remark', '')
-        # تتبع الحالة مدمجة مع التأخير، ليرسل إشعاراً جديداً إذا تغير وقت التأخير فقط
         current_state = f"{raw_status}_{delay_info}"
         
         cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
@@ -196,7 +198,7 @@ check_flights()
 
 @app.route('/')
 def home():
-    return "Multi-Airport Flight Bot is running perfectly with DB and Delay tracking!"
+    return "Multi-Airport Flight Bot is running with full details!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
