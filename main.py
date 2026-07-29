@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# --- إعداد قاعدة البيانات مع حماية القفل (Timeout) ---
+# --- إعداد قاعدة البيانات المحلية ---
 def get_db_connection():
     conn = sqlite3.connect('bot_database.db', timeout=30.0, check_same_thread=False)
     return conn
@@ -126,7 +126,7 @@ def send_telegram_full_details(flight, note_type, airport_name):
 
     send_telegram(msg)
 
-def check_flights():
+def fetch_all_flights_data():
     now = datetime.now()
     today = now.strftime('%Y-%m-%d')
     all_fetched_flights = []
@@ -147,19 +147,43 @@ def check_flights():
                     flight['_airport_name'] = airport["name"]
                     all_fetched_flights.append(flight)
         except Exception as e:
-            print(f"خطأ في جلب البيانات: {e}")
+            print(f"Fetch Error: {e}")
+            
+    return all_fetched_flights
 
-    def parse_flight_time(f):
-        d = f.get('flightDate', '9999-12-31')
-        t = f.get('scheduledTime', '00:00')
-        return f"{d} {t}"
+# --- دالة التهيئة الصامتة (تحفظ السجلات بدون إرسال رسائل عند إعادة تشغيل السيرفر) ---
+def silent_bootstrap():
+    flights = fetch_all_flights_data()
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    for flight in flights:
+        airport_name = flight.get('_airport_name')
+        f_num = flight.get('flightNumber')
+        if not f_num or f_num == 'Unknown':
+            f_num = flight.get('route', 'UNKNOWN')
+        f_date = flight.get('flightDate', '')
+        f_type = flight.get('type', '')
+        
+        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
+        
+        raw_status = str(flight.get('status', 'scheduled')).strip().lower()
+        actual_time = flight.get('actualTime', '')
+        current_state = f"{raw_status}_{actual_time}"
+        
+        cursor.execute("INSERT OR IGNORE INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
+        
+    conn.commit()
+    conn.close()
 
-    all_fetched_flights.sort(key=parse_flight_time)
-
+def check_flights():
+    flights = fetch_all_flights_data()
+    now = datetime.now()
+    
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    for flight in all_fetched_flights:
+    for flight in flights:
         airport_name = flight.get('_airport_name')
         f_num = flight.get('flightNumber')
         if not f_num or f_num == 'Unknown':
@@ -169,6 +193,7 @@ def check_flights():
         f_time = flight.get('scheduledTime', '')
         f_type = flight.get('type', '')
         
+        # استبعاد الرحلات التي مر عليها أكثر من 15 ساعة فقط لتخفيف الضغط على البيانات
         try:
             flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
             if now > flight_datetime + timedelta(hours=15):
@@ -176,10 +201,9 @@ def check_flights():
         except:
             pass
 
-        # استخدام معرف فريد ثابت لمنع التكرار عند تغير الوقت البسيط
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
         
-        raw_status = flight.get('status', 'scheduled')
+        raw_status = str(flight.get('status', 'scheduled')).strip().lower()
         actual_time = flight.get('actualTime', '')
         current_state = f"{raw_status}_{actual_time}"
         
@@ -187,15 +211,21 @@ def check_flights():
         row = cursor.fetchone()
         
         if row is None:
+            # الرحلة جديدة كلياً ولم تكن موجودة لحظة التهيئة الصامتة
             send_telegram_full_details(flight, "new", airport_name)
-            cursor.execute("INSERT OR REPLACE INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
+            cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
             conn.commit()
+            
         elif row[0] != current_state:
+            # حالة الرحلة تغيرت (مثلاً من في موعدها إلى أقلعت)
             send_telegram_full_details(flight, "update", airport_name)
             cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_state, f_id))
             conn.commit()
 
     conn.close()
+
+# تشغيل التهيئة الصامتة مرة واحدة عند إقلاع السيرفر لضمان عدم إرسال الرحلات الموجودة مسبقاً
+silent_bootstrap()
 
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 1})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
@@ -203,7 +233,7 @@ scheduler.start()
 
 @app.route('/')
 def home():
-    return "Multi-Airport Flight Bot is running successfully!"
+    return "Multi-Airport Flight Bot is running flawlessly!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
