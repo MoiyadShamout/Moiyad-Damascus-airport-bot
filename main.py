@@ -176,11 +176,12 @@ def check_flights():
         except:
             pass
 
-        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}_{f_time}"
+        # استخدام معرف فريد ثابت لمنع التكرار عند تغير الوقت البسيط
+        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
         
-        raw_status = flight.get('status', '')
-        delay_info = flight.get('delay', '') or flight.get('remark', '')
-        current_state = f"{raw_status}_{delay_info}"
+        raw_status = flight.get('status', 'scheduled')
+        actual_time = flight.get('actualTime', '')
+        current_state = f"{raw_status}_{actual_time}"
         
         cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
         row = cursor.fetchone()
@@ -196,7 +197,7 @@ def check_flights():
 
     conn.close()
 
-scheduler = BackgroundScheduler(job_defaults={'max_instances': 2})
+scheduler = BackgroundScheduler(job_defaults={'max_instances': 1})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
