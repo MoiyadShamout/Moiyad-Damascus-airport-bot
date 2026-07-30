@@ -7,6 +7,20 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
+# --- أوزان الحالات الصارمة (لمنع عودة الرحلة لحالة سابقة) ---
+STATUS_WEIGHTS = {
+    'scheduled': 1,
+    'on time': 1,
+    'estimated': 2,
+    'delayed': 3,
+    'departed': 4,
+    'in_flight': 5,
+    'landed': 6,
+    'arrived': 6,
+    'diverted': 7,
+    'cancelled': 7
+}
+
 # --- إعداد قاعدة البيانات المحلية ---
 def get_db_connection():
     conn = sqlite3.connect('bot_database.db', timeout=30.0, check_same_thread=False)
@@ -26,7 +40,6 @@ def init_db():
 
 init_db()
 
-# --- إعدادات المطارات ---
 AIRPORTS_CONFIG = [
     {
         "name": "مطار دمشق الدولي",
@@ -48,7 +61,6 @@ AIRPORTS_CONFIG = [
     }
 ]
 
-# --- إعدادات التلغرام ---
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
 
@@ -153,7 +165,6 @@ def fetch_all_flights_data():
             
     return all_fetched_flights
 
-# --- التهيئة الصامتة (تعمل مرة واحدة عند الإقلاع لتسجيل الرحلات القديمة دون إرسال رسائل) ---
 def silent_bootstrap():
     flights = fetch_all_flights_data()
     conn = get_db_connection()
@@ -164,12 +175,10 @@ def silent_bootstrap():
         f_num = flight.get('flightNumber')
         if not f_num or f_num == 'Unknown':
             f_num = flight.get('route', 'UNKNOWN')
-        
         f_date = flight.get('flightDate', '')
         f_type = flight.get('type', '')
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
         
-        # التعديل الصارم: حفظ حالة الرحلة (status) فقط وتجاهل أي تفاصيل أخرى
         raw_status = str(flight.get('status', 'scheduled')).strip().lower()
         
         cursor.execute("INSERT OR IGNORE INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, raw_status))
@@ -177,25 +186,42 @@ def silent_bootstrap():
     conn.commit()
     conn.close()
 
-# --- دالة فحص الرحلات الدورية ---
 def check_flights():
-    flights = fetch_all_flights_data()
+    raw_flights = fetch_all_flights_data()
     now = datetime.now()
     
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    for flight in flights:
+    # 1. فلترة البيانات المعطوبة من Supabase (تنظيف التكرار المتضارب في نفس اللحظة)
+    unique_flights = {}
+    for flight in raw_flights:
         airport_name = flight.get('_airport_name')
         f_num = flight.get('flightNumber')
         if not f_num or f_num == 'Unknown':
             f_num = flight.get('route', 'UNKNOWN')
-            
+        f_date = flight.get('flightDate', '')
+        f_type = flight.get('type', '')
+
+        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
+        raw_status = str(flight.get('status', 'scheduled')).strip().lower()
+        current_weight = STATUS_WEIGHTS.get(raw_status, 0)
+
+        if f_id in unique_flights:
+            existing_status = str(unique_flights[f_id].get('status', 'scheduled')).strip().lower()
+            existing_weight = STATUS_WEIGHTS.get(existing_status, 0)
+            # نحتفظ فقط بالحالة الأحدث والأعلى وزناً
+            if current_weight > existing_weight:
+                unique_flights[f_id] = flight
+        else:
+            unique_flights[f_id] = flight
+
+    # 2. معالجة الرحلات المفلترة
+    for f_id, flight in unique_flights.items():
+        airport_name = flight.get('_airport_name')
         f_date = flight.get('flightDate', '')
         f_time = flight.get('scheduledTime', '')
-        f_type = flight.get('type', '')
         
-        # استبعاد مؤقت للرحلات التي مضى عليها أكثر من 15 ساعة لتخفيف الضغط
         try:
             flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
             if now > flight_datetime + timedelta(hours=15):
@@ -203,40 +229,38 @@ def check_flights():
         except:
             pass
 
-        f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
-        
-        # التعديل الصارم: المتغير الوحيد الذي سيتم اعتماده لمعرفة إن كان هناك تحديث هو "status" فقط
         raw_status = str(flight.get('status', 'scheduled')).strip().lower()
-        current_state = raw_status 
+        current_state = raw_status
+        current_weight = STATUS_WEIGHTS.get(raw_status, 0)
         
         cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
         row = cursor.fetchone()
         
         if row is None:
-            # رحلة جديدة كلياً
             send_telegram_full_details(flight, "new", airport_name)
             cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
             conn.commit()
             
         elif row[0] != current_state:
-            # تغيير حقيقي في حالة الرحلة (مثلاً من scheduled إلى departed)
-            send_telegram_full_details(flight, "update", airport_name)
-            cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_state, f_id))
-            conn.commit()
+            last_weight = STATUS_WEIGHTS.get(row[0], 0)
+            
+            # الجدار الناري: البوت لن يرسل تحديثاً ولن يعدل الحالة إلا إذا كانت تتقدم للأمام (تجاوزت الوزن السابق)
+            if current_weight > last_weight:
+                send_telegram_full_details(flight, "update", airport_name)
+                cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_state, f_id))
+                conn.commit()
 
     conn.close()
 
-# تشغيل التهيئة الصامتة عند البداية لتسجيل كل ما سبق
 silent_bootstrap()
 
-# بدء المراقبة
 scheduler = BackgroundScheduler(job_defaults={'max_instances': 1})
 scheduler.add_job(func=check_flights, trigger="interval", minutes=2)
 scheduler.start()
 
 @app.route('/')
 def home():
-    return "Bot is running perfectly with strict state management!"
+    return "Bot is running perfectly with strict One-Way State Management!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
