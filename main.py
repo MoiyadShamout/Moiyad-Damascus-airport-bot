@@ -3,10 +3,11 @@ import requests
 import sqlite3
 from datetime import datetime, timedelta
 
-# --- أوزان الحالات الصارمة ---
+# --- أوزان الحالات للتدرج المنطقي ---
 STATUS_WEIGHTS = {
     'scheduled': 1,
     'on time': 1,
+    'on-time': 1,
     'estimated': 2,
     'delayed': 3,
     'departed': 4,
@@ -64,20 +65,20 @@ def send_telegram_full_details(flight, note_type):
     status_mapping = {
         'scheduled': 'في موعدها',
         'on time': 'في موعدها',
-        'delayed': 'متأخرة',
-        'cancelled': 'ملغاة',
-        'diverted': 'تم تحويل مسارها',
-        'landed': 'هبطت',
-        'departed': 'أقلعت',
-        'in_flight': 'في الجو',
-        'estimated': 'متوقع',
-        'arrived': 'وصلت'
+        'on-time': 'في موعدها',
+        'delayed': 'متأخرة ⚠️',
+        'cancelled': 'ملغاة ❌',
+        'diverted': 'تم تحويل مسارها 🔄',
+        'landed': 'هبطت 🛬',
+        'departed': 'أقلعت 🛫',
+        'in_flight': 'في الجو ✈️',
+        'estimated': 'متوقع ⏰',
+        'arrived': 'وصلت 🛬'
     }
     
     status_text = status_mapping.get(raw_status, raw_status)
     header_title = "✅ رحلة جديدة" if note_type == "new" else "⚠️ تحديث حالة الرحلة"
 
-    # فحص طراز الطائرة
     aircraft = flight.get('aircraft')
     aircraft_line = ""
     if aircraft and str(aircraft).strip() and str(aircraft).strip() != 'غير متوفر':
@@ -93,7 +94,7 @@ def send_telegram_full_details(flight, note_type):
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
         f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
-        f"📊 الحالة: <b>{status_text}</b>\n"
+        f"📊 الحالة الجديدة: <b>{status_text}</b>\n"
     )
     
     country_code = flight.get('countryCode')
@@ -187,6 +188,7 @@ def run_check():
         f_date = flight.get('flightDate', '')
         f_time = flight.get('scheduledTime', '')
         
+        # تجاوز الرحلات التي مضى عليها أكثر من 15 ساعة
         try:
             flight_datetime = datetime.strptime(f"{f_date} {f_time}", "%Y-%m-%d %H:%M")
             if now > flight_datetime + timedelta(hours=15):
@@ -201,11 +203,13 @@ def run_check():
         cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
         row = cursor.fetchone()
         
+        # 1. إذا كانت رحلة جديدة تماماً لم تُسجّل سابقاً
         if row is None:
             send_telegram_full_details(flight, "new")
             cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
             conn.commit()
             
+        # 2. إذا تبيّن أن حالة الرحلة تغيّرت (مثل الانتقال من on-time إلى departed أو landed)
         elif row[0] != current_state:
             last_weight = STATUS_WEIGHTS.get(row[0], 0)
             if current_weight > last_weight:
