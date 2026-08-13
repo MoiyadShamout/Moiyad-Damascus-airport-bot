@@ -44,7 +44,7 @@ def send_telegram(msg):
         print(f"Telegram Error: {e}")
 
 def send_telegram_full_details(flight, note_type):
-    airport_name = flight.get('_airport_name', 'مطار دمشق الدولي')
+    airport_name = flight.get('_airport_name', 'المطار')
     f_type = flight.get('type')
     route_info = flight.get('route', 'غير متوفر')
     
@@ -77,7 +77,7 @@ def send_telegram_full_details(flight, note_type):
     status_text = status_mapping.get(raw_status, raw_status)
     header_title = "✅ رحلة جديدة" if note_type == "new" else "⚠️ تحديث حالة الرحلة"
 
-    # فحص طراز الطائرة: إذا كان غير متاح أو فارغاً لا يتم إضافته للإشعار
+    # فحص طراز الطائرة
     aircraft = flight.get('aircraft')
     aircraft_line = ""
     if aircraft and str(aircraft).strip() and str(aircraft).strip() != 'غير متوفر':
@@ -102,8 +102,7 @@ def send_telegram_full_details(flight, note_type):
 
     send_telegram(msg)
 
-def fetch_damascus_official_flights():
-    base_url = "https://damairport.gov.sy/api/flights.php"
+def fetch_official_flights(base_url, airport_name):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "Accept": "application/json"
@@ -129,7 +128,7 @@ def fetch_damascus_official_flights():
                     route_city = route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
 
                     all_flights.append({
-                        "_airport_name": "مطار دمشق الدولي",
+                        "_airport_name": airport_name,
                         "flightNumber": item.get('flightNumber', 'UNKNOWN'),
                         "airline": airline_name,
                         "type": direction,
@@ -141,33 +140,26 @@ def fetch_damascus_official_flights():
                         "aircraft": item.get('aircraft', '')
                     })
         except Exception as e:
-            print(f"Error fetching Damascus flights ({direction}): {e}")
+            print(f"Error fetching {airport_name} flights ({direction}): {e}")
             
     return all_flights
 
-def fetch_aleppo_flights():
-    url = "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main"
-    headers = {
-        "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-        "accept": "application/vnd.pgrst.object+json"
-    }
+def fetch_all_airports_flights():
+    airports = [
+        {"url": "https://damairport.gov.sy/api/flights.php", "name": "مطار دمشق الدولي"},
+        {"url": "https://alpairport.gov.sy/api/flights.php", "name": "مطار حلب الدولي"},
+        {"url": "https://deirezzorairport.gov.sy/api/flights.php", "name": "مطار دير الزور الدولي"}
+    ]
+    
     all_flights = []
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        if res.status_code == 200:
-            data = res.json()
-            if isinstance(data, list): data = data[0] if data else {}
-            for f in data.get('payload', []):
-                f['_airport_name'] = "مطار حلب الدولي"
-                all_flights.append(f)
-    except Exception as e:
-        print(f"Aleppo Fetch Error: {e}")
+    for ap in airports:
+        all_flights.extend(fetch_official_flights(ap["url"], ap["name"]))
+        
     return all_flights
 
 def run_check():
     init_db()
-    raw_flights = fetch_damascus_official_flights() + fetch_aleppo_flights()
+    raw_flights = fetch_all_airports_flights()
     now = datetime.now()
     
     conn = get_db_connection()
