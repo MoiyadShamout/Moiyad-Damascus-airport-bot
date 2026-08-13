@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# --- أوزان الحالات الصارمة (لمنع عودة الرحلة لحالة سابقة) ---
+# --- أوزان الحالات الصارمة (لمنع تكرار أو عودة الرحلة لحالة سابقة) ---
 STATUS_WEIGHTS = {
     'scheduled': 1,
     'on time': 1,
@@ -40,27 +40,7 @@ def init_db():
 
 init_db()
 
-AIRPORTS_CONFIG = [
-    {
-        "name": "مطار دمشق الدولي",
-        "url": "https://ognrupehzbbckimkaikb.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
-        "headers": {
-            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbnJ1cGVoemJiY2tpbWthaWtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ2ODc3NTIsImV4cCI6MjA4MDI2Mzc1Mn0.cBh06V2W7ocx8etUixo2lcdl1XH5RR4pTjXNOG59Xsg",
-            "accept": "application/vnd.pgrst.object+json"
-        }
-    },
-    {
-        "name": "مطار حلب الدولي",
-        "url": "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main",
-        "headers": {
-            "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
-            "accept": "application/vnd.pgrst.object+json"
-        }
-    }
-]
-
+# --- إعدادات التلغرام ---
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
 CHAT_ID = '-1004481182341'
 
@@ -71,7 +51,8 @@ def send_telegram(msg):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-def send_telegram_full_details(flight, note_type, airport_name):
+def send_telegram_full_details(flight, note_type):
+    airport_name = flight.get('_airport_name', 'مطار دمشق الدولي')
     f_type = flight.get('type')
     route_info = flight.get('route', 'غير متوفر')
     
@@ -114,56 +95,100 @@ def send_telegram_full_details(flight, note_type, airport_name):
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
         f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
+        f"📊 الحالة: <b>{status_text}</b>\n"
     )
     
-    actual_time = flight.get('actualTime')
-    if actual_time:
-        msg += f"⌚ الوقت الفعلي: <b>{actual_time}</b>\n"
-        
-    estimated_time = flight.get('estimatedTime')
-    if estimated_time and not actual_time:
-        msg += f"⌚ الوقت المتوقع: <b>{estimated_time}</b>\n"
-        
-    msg += f"📊 الحالة: <b>{status_text}</b>\n"
-    
-    delay_info = flight.get('delay')
-    if delay_info:
-        msg += f"⏱️ مدة التأخير: <b>{delay_info} دقيقة</b>\n"
-        
-    remark_info = flight.get('remark')
-    if remark_info:
-        msg += f"📝 ملاحظات: <b>{remark_info}</b>\n"
-        
     country_code = flight.get('countryCode')
     if country_code:
         msg += f"🌐 رمز الدولة: {country_code.upper()}\n"
 
     send_telegram(msg)
 
-def fetch_all_flights_data():
-    now = datetime.now()
-    today = now.strftime('%Y-%m-%d')
-    all_fetched_flights = []
+# --- جلب البيانات من الموقع الرسمي الجديد لمطار دمشق ---
+def fetch_damascus_official_flights():
+    base_url = "https://damairport.gov.sy/api/flights.php"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    }
     
-    for airport in AIRPORTS_CONFIG:
+    all_flights = []
+    directions = ['arrival', 'departure']
+    
+    for direction in directions:
         try:
-            response = requests.get(airport["url"], headers=airport["headers"], timeout=15)
-            if response.status_code == 200:
-                data = response.json()
-                if isinstance(data, list): 
-                    data = data[0] if data else {}
-                flights = data.get('payload', [])
+            # نطلب الصفحة الأولى بـ 20 رحلة لكل اتجاه
+            params = {
+                "paged": 1,
+                "page": 1,
+                "pageSize": 20,
+                "dir": direction
+            }
+            res = requests.get(base_url, headers=headers, params=params, timeout=15)
+            if res.status_code == 200:
+                json_data = res.json()
+                raw_flights = json_data.get('flights', [])
                 
-                for flight in flights:
-                    flight_date = flight.get('flightDate')
-                    if flight_date and flight_date < today:
-                        continue
-                    flight['_airport_name'] = airport["name"]
-                    all_fetched_flights.append(flight)
+                for item in raw_flights:
+                    # تحويل الهيكلية الجديدة لـ JSON إلى الصيغة المعتمدة للسكربت
+                    f_num = item.get('flightNumber', 'UNKNOWN')
+                    airline_data = item.get('airlineInfo', {})
+                    airline_name = airline_data.get('nameAr') or item.get('airline', 'غير متوفر')
+                    
+                    if direction == 'arrival':
+                        route_data = item.get('originAirport', {})
+                        route_city = route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
+                        country_code = route_data.get('country_code', '')
+                    else:
+                        route_data = item.get('destinationAirport', {})
+                        route_city = route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
+                        country_code = route_data.get('country_code', '')
+
+                    flight_obj = {
+                        "_airport_name": "مطار دمشق الدولي",
+                        "flightNumber": f_num,
+                        "airline": airline_name,
+                        "type": direction,
+                        "flightDate": item.get('date', ''),
+                        "scheduledTime": item.get('time', ''),
+                        "status": item.get('status', 'scheduled'),
+                        "route": route_city,
+                        "countryCode": country_code,
+                        "aircraft": item.get('aircraft', 'غير متوفر')
+                    }
+                    all_flights.append(flight_obj)
         except Exception as e:
-            print(f"Fetch Error: {e}")
+            print(f"Damascus Fetch Error ({direction}): {e}")
             
-    return all_fetched_flights
+    return all_flights
+
+# --- جلب بيانات مطار حلب (من المصدر السابق) ---
+def fetch_aleppo_flights():
+    url = "https://ttqpvffxbouowufwbfze.supabase.co/rest/v1/flight_cache?select=payload%2Cupdated_at%2Ctotal_arrivals%2Ctotal_departures&id=eq.main"
+    headers = {
+        "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR0cXB2ZmZ4Ym91b3d1ZndiZnplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY3ODU3NDMsImV4cCI6MjA4MjM2MTc0M30.A3j9iny8RusFtUt8J5mAyaj33cKEQJW9EPJw8iLtVWc",
+        "accept": "application/vnd.pgrst.object+json"
+    }
+    all_flights = []
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            if isinstance(data, list): 
+                data = data[0] if data else {}
+            flights = data.get('payload', [])
+            for flight in flights:
+                flight['_airport_name'] = "مطار حلب الدولي"
+                all_flights.append(flight)
+    except Exception as e:
+        print(f"Aleppo Fetch Error: {e}")
+    return all_flights
+
+def fetch_all_flights_data():
+    damascus_flights = fetch_damascus_official_flights()
+    aleppo_flights = fetch_aleppo_flights()
+    return damascus_flights + aleppo_flights
 
 def silent_bootstrap():
     flights = fetch_all_flights_data()
@@ -172,15 +197,12 @@ def silent_bootstrap():
     
     for flight in flights:
         airport_name = flight.get('_airport_name')
-        f_num = flight.get('flightNumber')
-        if not f_num or f_num == 'Unknown':
-            f_num = flight.get('route', 'UNKNOWN')
+        f_num = flight.get('flightNumber', 'UNKNOWN')
         f_date = flight.get('flightDate', '')
         f_type = flight.get('type', '')
         f_id = f"{airport_name}_{f_num}_{f_type}_{f_date}"
         
         raw_status = str(flight.get('status', 'scheduled')).strip().lower()
-        
         cursor.execute("INSERT OR IGNORE INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, raw_status))
         
     conn.commit()
@@ -193,13 +215,11 @@ def check_flights():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 1. فلترة البيانات المعطوبة من Supabase (تنظيف التكرار المتضارب في نفس اللحظة)
+    # 1. فلترة البيانات وتطبيق أوزان الحالات
     unique_flights = {}
     for flight in raw_flights:
         airport_name = flight.get('_airport_name')
-        f_num = flight.get('flightNumber')
-        if not f_num or f_num == 'Unknown':
-            f_num = flight.get('route', 'UNKNOWN')
+        f_num = flight.get('flightNumber', 'UNKNOWN')
         f_date = flight.get('flightDate', '')
         f_type = flight.get('type', '')
 
@@ -210,15 +230,13 @@ def check_flights():
         if f_id in unique_flights:
             existing_status = str(unique_flights[f_id].get('status', 'scheduled')).strip().lower()
             existing_weight = STATUS_WEIGHTS.get(existing_status, 0)
-            # نحتفظ فقط بالحالة الأحدث والأعلى وزناً
             if current_weight > existing_weight:
                 unique_flights[f_id] = flight
         else:
             unique_flights[f_id] = flight
 
-    # 2. معالجة الرحلات المفلترة
+    # 2. معالجة التحديثات والإرسال
     for f_id, flight in unique_flights.items():
-        airport_name = flight.get('_airport_name')
         f_date = flight.get('flightDate', '')
         f_time = flight.get('scheduledTime', '')
         
@@ -237,16 +255,14 @@ def check_flights():
         row = cursor.fetchone()
         
         if row is None:
-            send_telegram_full_details(flight, "new", airport_name)
+            send_telegram_full_details(flight, "new")
             cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_state))
             conn.commit()
             
         elif row[0] != current_state:
             last_weight = STATUS_WEIGHTS.get(row[0], 0)
-            
-            # الجدار الناري: البوت لن يرسل تحديثاً ولن يعدل الحالة إلا إذا كانت تتقدم للأمام (تجاوزت الوزن السابق)
             if current_weight > last_weight:
-                send_telegram_full_details(flight, "update", airport_name)
+                send_telegram_full_details(flight, "update")
                 cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_state, f_id))
                 conn.commit()
 
@@ -260,7 +276,7 @@ scheduler.start()
 
 @app.route('/')
 def home():
-    return "Bot is running perfectly with strict One-Way State Management!"
+    return "Bot is running with Official Damascus Airport API Integration!"
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
