@@ -1,22 +1,10 @@
-import os
 import requests
 import sqlite3
 from datetime import datetime, timedelta
 
-# --- أوزان الحالات للتدرج المنطقي ---
-STATUS_WEIGHTS = {
-    'scheduled': 1,
-    'on time': 1,
-    'on-time': 1,
-    'estimated': 2,
-    'delayed': 3,
-    'departed': 4,
-    'in_flight': 5,
-    'landed': 6,
-    'arrived': 6,
-    'diverted': 7,
-    'cancelled': 7
-}
+# --- إعدادات الاتصال ---
+TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
+CHAT_ID = '-1004481182341'
 
 def get_db_connection():
     return sqlite3.connect('bot_database.db', timeout=30.0)
@@ -33,9 +21,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
-CHAT_ID = '-1004481182341'
-
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
@@ -48,6 +33,7 @@ def send_telegram_full_details(flight, note_type):
     f_type = flight.get('type')
     route_info = flight.get('route', 'غير متوفر')
     
+    # تحديد مسار الرحلة بدقة لتفاصيل الرسالة
     if f_type == 'arrival':
         direction = f"🛬 رحلة وصول إلى {airport_name}"
         from_airport = f"مطار {route_info}"
@@ -59,71 +45,72 @@ def send_telegram_full_details(flight, note_type):
         to_airport = f"مطار {route_info}"
         time_label = "موعد المغادرة المحدد"
     
-    raw_status = str(flight.get('status', 'scheduled')).strip().lower()
-    
     status_mapping = {
-        'scheduled': 'في موعدها',
-        'on time': 'في موعدها',
-        'on-time': 'في موعدها',
-        'delayed': 'متأخرة ⚠️',
-        'cancelled': 'ملغاة ❌',
-        'diverted': 'تم تحويل مسارها 🔄',
-        'landed': 'هبطت 🛬',
-        'departed': 'أقلعت 🛫',
-        'in_flight': 'في الجو ✈️',
-        'estimated': 'متوقع ⏰',
-        'arrived': 'وصلت 🛬'
+        'scheduled': 'في موعدها', 'on time': 'في موعدها', 'on-time': 'في موعدها',
+        'delayed': 'متأخرة ⚠️', 'cancelled': 'ملغاة ❌', 'diverted': 'تم تحويل مسارها 🔄',
+        'landed': 'هبطت 🛬', 'departed': 'أقلعت 🛫', 'in_flight': 'في الجو ✈️',
+        'estimated': 'متوقع ⏰', 'arrived': 'وصلت 🛬'
     }
     
+    raw_status = str(flight.get('status', 'scheduled')).strip().lower()
     status_text = status_mapping.get(raw_status, raw_status)
     header_title = "✅ رحلة جديدة" if note_type == "new" else "⚠️ تحديث حالة الرحلة"
 
     msg = (
         f"<b>{header_title} ({airport_name})</b>\n\n"
         f"<b>{direction}</b>\n"
-        f"📅 التاريخ: {flight.get('flightDate', 'غير متوفر')}\n"
-        f"✈️ رقم الرحلة: {flight.get('flightNumber', 'غير متوفر')}\n"
-        f"🏢 الناقل: {flight.get('airline', 'غير متوفر')}\n"
+        f"📅 التاريخ: {flight.get('flightDate')}\n"
+        f"✈️ رقم الرحلة: {flight.get('flightNumber')}\n"
+        f"🏢 الناقل: {flight.get('airline')}\n"
         f"🛫 مغادرة من: {from_airport}\n"
         f"🛬 متجهة إلى: {to_airport}\n"
-        f"⏰ {time_label}: {flight.get('scheduledTime', 'غير متوفر')}\n"
-        f"📊 الحالة: <b>{status_text}</b>\n"
+        f"⏰ {time_label}: {flight.get('scheduledTime')}\n"
+        f"📊 الحالة: <b>{status_text}</b>"
     )
-    
     send_telegram(msg)
 
 def fetch_official_flights(base_url, airport_name):
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     all_flights = []
     
-    # جلب رحلات اليوم والأيام الـ 3 القادمة لضمان تغطية أي رحلات مستقبلية أُضيفت حديثاً
     today = datetime.now()
+    today_str = today.strftime("%Y-%m-%d")
+    
+    # جلب رحلات اليوم و 3 أيام قادمة لضمان رصد أي رحلة مستقبلية تتم إضافتها
     dates_to_fetch = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(4)]
     
     for date_str in dates_to_fetch:
         for direction in ['arrival', 'departure']:
             try:
-                params = {"paged": 1, "page": 1, "pageSize": 50, "dir": direction, "date": date_str}
+                params = {"dir": direction, "date": date_str}
                 res = requests.get(base_url, headers=headers, params=params, timeout=15)
                 if res.status_code == 200:
                     raw_flights = res.json().get('flights', [])
                     for item in raw_flights:
+                        flight_date = item.get('date', '')
+                        
+                        # فلترة صارمة: تجاهل الرحلات الوهمية أو الرحلات التي تاريخها أقدم من اليوم
+                        if not flight_date or flight_date < today_str:
+                            continue
+                            
                         airline_data = item.get('airlineInfo', {})
-                        airline_name = airline_data.get('nameAr') or item.get('airline', 'غير متوفر')
                         route_data = (item.get('originAirport') if direction == 'arrival' else item.get('destinationAirport')) or {}
-                        route_city = route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
-
+                        
                         all_flights.append({
                             "_airport_name": airport_name,
-                            "flightNumber": item.get('flightNumber', 'UNKNOWN'),
-                            "airline": airline_name,
+                            "flightNumber": item.get('flightNumber', 'غير متوفر'),
+                            "airline": airline_data.get('nameAr') or item.get('airline', 'غير متوفر'),
                             "type": direction,
-                            "flightDate": item.get('date', date_str),
-                            "scheduledTime": item.get('time', ''),
+                            "flightDate": flight_date,
+                            "scheduledTime": item.get('time', '00:00'),
                             "status": item.get('status', 'scheduled'),
-                            "route": route_city
+                            "route": route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
                         })
-            except: continue
+            except Exception as e:
+                continue
+                
+    # ترتيب الرحلات زمنياً (حسب التاريخ ثم الوقت) لتظهر مرتبة كالموقع تماماً
+    all_flights.sort(key=lambda x: (x['flightDate'], x['scheduledTime']))
     return all_flights
 
 def run_check():
@@ -143,18 +130,18 @@ def run_check():
     
     for flight in all_raw_flights:
         f_id = f"{flight['_airport_name']}_{flight['flightNumber']}_{flight['type']}_{flight['flightDate']}"
-        raw_status = str(flight.get('status', 'scheduled')).strip().lower()
+        current_status = str(flight.get('status', 'scheduled')).strip().lower()
         
         cursor.execute("SELECT last_status FROM flight_last_status WHERE flight_id = ?", (f_id,))
         row = cursor.fetchone()
         
         if row is None:
             send_telegram_full_details(flight, "new")
-            cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, raw_status))
-        elif row[0] != raw_status:
-            if STATUS_WEIGHTS.get(raw_status, 0) > STATUS_WEIGHTS.get(row[0], 0):
-                send_telegram_full_details(flight, "update")
-                cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (raw_status, f_id))
+            cursor.execute("INSERT INTO flight_last_status (flight_id, last_status) VALUES (?, ?)", (f_id, current_status))
+        elif row[0] != current_status:
+            send_telegram_full_details(flight, "update")
+            cursor.execute("UPDATE flight_last_status SET last_status = ? WHERE flight_id = ?", (current_status, f_id))
+            
         conn.commit()
     conn.close()
 
