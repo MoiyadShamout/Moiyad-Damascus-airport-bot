@@ -2,13 +2,14 @@ name: Flight Tracker Cron
 
 on:
   schedule:
-    # يعمل تلقائياً كل 10 دقائق
     - cron: '*/10 * * * *'
-  workflow_dispatch: # يتيح لك التشغيل اليدوي للتجربة في أي وقت
+  workflow_dispatch:
 
 jobs:
   check-flights:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 🔑 هذا السطر هو الذي سيسمح للبوت بحفظ الملف!
 
     steps:
       - name: Checkout code
