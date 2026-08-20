@@ -1,6 +1,6 @@
 import requests
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- إعدادات الاتصال ---
 TELEGRAM_TOKEN = '8975492791:AAGg_v5cRNnuo3gqdi9msdZrarzFcpO7ZzQ'
@@ -33,7 +33,6 @@ def send_telegram_full_details(flight, note_type):
     f_type = flight.get('type')
     route_info = flight.get('route', 'غير متوفر')
     
-    # تحديد مسار الرحلة بدقة لتفاصيل الرسالة
     if f_type == 'arrival':
         direction = f"🛬 رحلة وصول إلى {airport_name}"
         from_airport = f"مطار {route_info}"
@@ -73,44 +72,45 @@ def fetch_official_flights(base_url, airport_name):
     headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     all_flights = []
     
-    today = datetime.now()
-    today_str = today.strftime("%Y-%m-%d")
+    # الحصول على تاريخ اليوم الحالي فقط بدقة
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    base_city = airport_name.replace("مطار ", "").replace(" الدولي", "").strip()
     
-    # جلب رحلات اليوم و 3 أيام قادمة لضمان رصد أي رحلة مستقبلية تتم إضافتها
-    dates_to_fetch = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(4)]
-    
-    for date_str in dates_to_fetch:
-        for direction in ['arrival', 'departure']:
-            try:
-                params = {"dir": direction, "date": date_str}
-                res = requests.get(base_url, headers=headers, params=params, timeout=15)
-                if res.status_code == 200:
-                    raw_flights = res.json().get('flights', [])
-                    for item in raw_flights:
-                        flight_date = item.get('date', '')
+    for direction in ['arrival', 'departure']:
+        try:
+            params = {"dir": direction, "date": today_str}
+            res = requests.get(base_url, headers=headers, params=params, timeout=15)
+            if res.status_code == 200:
+                raw_flights = res.json().get('flights', [])
+                for item in raw_flights:
+                    flight_date = item.get('date', '')
+                    
+                    # جلب رحلات اليوم الحالي فقط وتجاهل أي شيء آخر
+                    if flight_date != today_str:
+                        continue
                         
-                        # فلترة صارمة: تجاهل الرحلات الوهمية أو الرحلات التي تاريخها أقدم من اليوم
-                        if not flight_date or flight_date < today_str:
-                            continue
-                            
-                        airline_data = item.get('airlineInfo', {})
-                        route_data = (item.get('originAirport') if direction == 'arrival' else item.get('destinationAirport')) or {}
-                        
-                        all_flights.append({
-                            "_airport_name": airport_name,
-                            "flightNumber": item.get('flightNumber', 'غير متوفر'),
-                            "airline": airline_data.get('nameAr') or item.get('airline', 'غير متوفر'),
-                            "type": direction,
-                            "flightDate": flight_date,
-                            "scheduledTime": item.get('time', '00:00'),
-                            "status": item.get('status', 'scheduled'),
-                            "route": route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
-                        })
-            except Exception as e:
-                continue
+                    airline_data = item.get('airlineInfo', {})
+                    route_data = (item.get('originAirport') if direction == 'arrival' else item.get('destinationAirport')) or {}
+                    route_city = route_data.get('city_ar') or route_data.get('name_ar', 'غير متوفر')
+                    
+                    # فلترة الرحلات الوهمية (التي تكون نفس مدينة المطار)
+                    if base_city in route_city or route_city in base_city:
+                        continue
+                    
+                    all_flights.append({
+                        "_airport_name": airport_name,
+                        "flightNumber": item.get('flightNumber', 'غير متوفر'),
+                        "airline": airline_data.get('nameAr') or item.get('airline', 'غير متوفر'),
+                        "type": direction,
+                        "flightDate": flight_date,
+                        "scheduledTime": item.get('time', '00:00'),
+                        "status": item.get('status', 'scheduled'),
+                        "route": route_city
+                    })
+        except Exception as e:
+            continue
                 
-    # ترتيب الرحلات زمنياً (حسب التاريخ ثم الوقت) لتظهر مرتبة كالموقع تماماً
-    all_flights.sort(key=lambda x: (x['flightDate'], x['scheduledTime']))
+    all_flights.sort(key=lambda x: x['scheduledTime'])
     return all_flights
 
 def run_check():
